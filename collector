@@ -75,8 +75,16 @@ case "${1:-status}" in
     ;;
   status)
     proc_up && echo "process:      UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process:      down"
+    echo "-- layer 1: system proxy (Arc / GUI apps) --"
     echo "proxy http:   $($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')"
-    echo "proxy https:  $($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')  <- your API + chat traffic rides here"
+    echo "proxy https:  $($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')"
+    echo "-- layer 2: env vars (CLI tools + apps launched with them; collector CANNOT change these for a running app) --"
+    if [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; then
+      echo "HTTP(S)_PROXY: SET -> ${HTTPS_PROXY:-$HTTP_PROXY}  (this shell/app is pinned here regardless of layer 1)"
+    else
+      echo "HTTP(S)_PROXY: unset (in this shell)"
+    fi
+    echo "-- verdict (layer 1 only) --"
     # the one line that tells you if you're in control:
     if armed; then
       proc_up && echo "VERDICT: LIVE — traffic goes THROUGH mitmproxy. Killing it breaks your net until you 'collector off'." \
