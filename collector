@@ -1,0 +1,38 @@
+#!/bin/bash
+# chat-collector on/off. Flips the proxy process AND the Wi-Fi proxy setting together.
+# Usage: collector on | off | status
+set -euo pipefail
+
+PORT=8899
+SVC="Wi-Fi"                       # network service; `networksetup -listnetworkserviceorder` to check
+ADDON="$HOME/Code/chat-collector/chat_collector.py"
+PIDFILE="/tmp/chat-collector.pid"
+LOG="/tmp/chat-collector.log"
+BYPASS="localhost 127.0.0.1 *.local"   # keep local dev apps working
+
+running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+
+case "${1:-status}" in
+  on)
+    if running; then echo "already on (pid $(cat "$PIDFILE"))"; exit 0; fi
+    mitmdump -s "$ADDON" -p "$PORT" >"$LOG" 2>&1 &
+    echo $! >"$PIDFILE"
+    networksetup -setwebproxy        "$SVC" 127.0.0.1 "$PORT"
+    networksetup -setsecurewebproxy  "$SVC" 127.0.0.1 "$PORT"
+    networksetup -setproxybypassdomains "$SVC" $BYPASS
+    echo "ON — proxy $SVC -> 127.0.0.1:$PORT, dumps in ~/chat-dumps/, log $LOG"
+    ;;
+  off)
+    networksetup -setwebproxystate       "$SVC" off
+    networksetup -setsecurewebproxystate "$SVC" off
+    running && kill "$(cat "$PIDFILE")" 2>/dev/null || true
+    rm -f "$PIDFILE"
+    echo "OFF — proxy disabled, mitmdump stopped"
+    ;;
+  status)
+    running && echo "collector: ON (pid $(cat "$PIDFILE"))" || echo "collector: OFF"
+    networksetup -getwebproxy "$SVC" | sed 's/^/  web:  /'
+    ;;
+  *)
+    echo "usage: collector on|off|status"; exit 1;;
+esac
