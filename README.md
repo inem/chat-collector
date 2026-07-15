@@ -13,76 +13,113 @@ Overwrite = latest full snapshot. Domain-agnostic: add a service, add a row.
 - **mitmproxy** is the one layer that's domain-agnostic *and* survives a
   hostile browser: it sees every response, you just filter by URL.
 
+## The model: leave it always on
+
+mitmproxy is cheap — ~0% CPU idle, ~130 MB RAM. There is no resource reason to
+toggle it. And toggling the *plumbing* is exactly what bites you (see below), so
+the recommended setup is **always-on**: mitmproxy runs as a launchd service, and
+you never tear it down.
+
+### Two proxy layers — know which one you're using
+
+Traffic reaches mitmproxy through **two independent mechanisms**. Confusing them
+causes every "why did my net break" moment:
+
+| Layer | Set via | Who routes through it |
+|-------|---------|-----------------------|
+| **System proxy** | `networksetup` (what `collector` manages) | GUI apps: **browsers (Arc, Chrome…)** |
+| **Env vars** | `HTTP_PROXY` / `HTTPS_PROXY` in a process's environment | CLI tools + any app *launched with them set* |
+
+Capturing **browser** chat sessions (the point of this tool) only needs the
+**system proxy** layer. The env-var layer is a separate opt-in for capturing
+your own CLI/app traffic — and it's the sharp edge: env vars are fixed at
+process launch and can't be changed for a running app, so an app pinned to
+`127.0.0.1:8899` **breaks the instant mitmproxy dies** and does *not* recover
+when you disarm the system proxy. Only a relaunch of that app fixes it.
+
+That's the whole case for always-on: if mitmproxy never dies, nothing pinned to
+it ever breaks.
+
 ## Install
 
 ```bash
 brew install mitmproxy
 ```
 
-## On / off
+### 1. Always-on service (launchd)
+
+`com.chat-collector.plist` runs mitmdump with `KeepAlive` + `RunAtLoad` —
+starts at login, restarts if it ever dies, survives reboot.
 
 ```bash
-collector on       # start mitmdump, confirm it's up, THEN arm the proxy
-collector off      # disarm the proxy, confirm it's off, THEN stop mitmdump
-collector status   # process up? proxy armed or direct?
+cp com.chat-collector.plist ~/Library/LaunchAgents/
+launchctl load -w ~/Library/LaunchAgents/com.chat-collector.plist
 ```
 
-**Fail-safe by construction.** The only way a proxy setup breaks your net is
-"proxy armed at a port with no live proxy behind it". So the handle enforces
-strict ordering and never trusts `networksetup`'s exit code — it reads the
-state back:
+If a mitmdump is already running on 8899, stop it first (`pkill -f
+chat_collector.py`) so launchd owns the one on the port.
 
-- `on` won't arm the proxy until mitmdump is actually listening on the port.
-- `off` won't kill mitmdump until it has **confirmed** the proxy read back off.
-  Can't confirm? It refuses to kill and tells you — your net stays up.
+### 2. Trust the CA cert (once)
 
-`off` means *truly off*: proxy disarmed, traffic direct, mitmproxy out of the
-path. Dumps land in `~/chat-dumps/<service>/<id>.json`; log `/tmp/chat-collector.log`.
-Edit `SVC` if your network service isn't `Wi-Fi`
-(`networksetup -listnetworkserviceorder`).
+First run generates `~/.mitmproxy/mitmproxy-ca-cert.pem`. Add it to the login
+keychain and mark it trusted, or visit [mitm.it](http://mitm.it) with the proxy
+armed. Without this, TLS won't decrypt and nothing is captured.
 
-### The one admin gate
+### 3. Point the browser at it
 
-macOS requires admin to flip the system proxy. Out of the box, on/off show the
-**native password popup** (one dialog per toggle, whole batch at once) — zero
-setup.
+Arm the system proxy so your browser routes through 8899:
 
-Tired of the popup? Add a one-time passwordless rule scoped to *only* the proxy
-subcommands, and on/off go silent:
+```bash
+collector on     # arm system proxy -> 127.0.0.1:8899 (Wi-Fi)
+```
+
+Dumps land in `~/chat-dumps/<service>/<id>.json`; log `/tmp/chat-collector.log`.
+
+## `collector` — manage the system-proxy (browser) layer
+
+```bash
+collector on       # arm the system proxy (browser traffic -> mitmproxy)
+collector off      # disarm it (browser traffic direct again)
+collector status   # both layers + a plain verdict
+```
+
+`status` reports **both** layers and a one-line verdict so you always know
+whether killing mitmproxy would break anything:
+
+```
+process:      UP (12345)
+-- layer 1: system proxy (Arc / GUI apps) --
+proxy http:   No
+proxy https:  No
+-- layer 2: env vars (CLI tools + apps launched with them) --
+HTTP(S)_PROXY: unset (in this shell)
+-- verdict (layer 1 only) --
+VERDICT: SAFE — no proxy armed. mitmproxy can't touch your traffic.
+```
+
+**Fail-safe.** `on` arms the proxy then makes a real request through it and
+auto-disarms if nothing flows. `off` disarms and confirms it read back off
+*before* touching anything. With always-on launchd you rarely need `off` at all
+— it's here for when you want the browser to go direct without stopping the
+service.
+
+### The admin gate
+
+Flipping the system proxy needs admin. Install a one-time passwordless rule
+scoped to *only* the proxy subcommands so `collector` runs silently:
 
 ```bash
 sudo visudo -f /etc/sudoers.d/chat-collector
 # paste sudoers.snippet (edit the username), save — visudo syntax-checks it
 ```
 
-The script tries the silent `sudo -n` path first and falls back to the popup,
-so the rule is a pure upgrade — never required.
-
-The CA cert must also be trusted **once** (below) before `on` captures TLS.
-
-## Run it by hand instead
-
-```bash
-mitmdump -s ~/Code/chat-collector/chat_collector.py -p 8899
-```
-
-...then set the proxy yourself. Each caught dump prints
-`[chat-collector] <service> <id> -> ...`.
-
-## One-time setup (yours — needs admin)
-
-1. **Point the browser at the proxy** — set HTTP/HTTPS proxy to `127.0.0.1:8899`
-   (System Settings → Network → your interface → Proxies, or per-app).
-2. **Trust the CA cert** — first run generates `~/.mitmproxy/mitmproxy-ca-cert.pem`.
-   Add it to the login keychain and mark it trusted, or visit
-   [mitm.it](http://mitm.it) while the proxy runs.
-
-Without both, TLS won't decrypt and nothing gets captured.
+Without it, `on` aborts cleanly (never hangs, never half-applies).
 
 ### Localhost gotcha
 
-The proxy will also intercept `localhost` traffic and can break local dev apps
-(websockets, etc.). Add a proxy bypass for `localhost, 127.0.0.1, *.local`.
+The proxy also intercepts `localhost`, which can break local dev apps
+(websockets, etc.). `collector` sets a bypass for `localhost, 127.0.0.1, *.local`
+automatically.
 
 ## Adding a service
 
