@@ -24,7 +24,10 @@ NS=/usr/sbin/networksetup
 
 proc_up() { pgrep -f "$PATTERN" >/dev/null; }
 port_up() { nc -z 127.0.0.1 "$PORT" 2>/dev/null; }
-armed()   { $NS -getwebproxy "$SVC" | grep -q "Enabled: Yes"; }
+# armed = EITHER proxy on. HTTPS (your API + the chat traffic) rides the SECURE
+# one, so checking only web/http was the blind spot that hid live interception.
+armed()   { $NS -getwebproxy "$SVC" | grep -q "Enabled: Yes" \
+         || $NS -getsecurewebproxy "$SVC" | grep -q "Enabled: Yes"; }
 # a REAL request through the proxy must return an HTTP response
 flows()   { curl -s -o /dev/null --max-time 6 -x "http://127.0.0.1:$PORT" http://example.com; }
 
@@ -71,9 +74,16 @@ case "${1:-status}" in
     else               echo "OFF — proxy disarmed, but a mitmdump WON'T DIE; check: pgrep -fl mitmdump"; exit 1; fi
     ;;
   status)
-    proc_up && echo "process: UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process: down"
-    armed && echo "proxy:   ARMED -> 127.0.0.1:$PORT (traffic via mitmproxy)" \
-          || echo "proxy:   off (traffic direct — collection inactive)"
+    proc_up && echo "process:      UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process:      down"
+    echo "proxy http:   $($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')"
+    echo "proxy https:  $($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')  <- your API + chat traffic rides here"
+    # the one line that tells you if you're in control:
+    if armed; then
+      proc_up && echo "VERDICT: LIVE — traffic goes THROUGH mitmproxy. Killing it breaks your net until you 'collector off'." \
+              || echo "VERDICT: DANGER — proxy armed but mitmproxy is DEAD. Your net is broken right now. Run: collector off"
+    else
+      echo "VERDICT: SAFE — no proxy armed. mitmproxy can't touch your traffic; kill it freely."
+    fi
     ;;
   *) echo "usage: collector on|off|status"; exit 1;;
 esac
