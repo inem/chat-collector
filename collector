@@ -1,14 +1,16 @@
 #!/bin/bash
 # chat-collector: one fail-safe handle for the whole thing.
 #
-# The ONLY thing that can break your net is "proxy armed + mitmdump dead".
-# So the rules are absolute:
-#   ON:  start mitmdump and confirm it listens  BEFORE arming the proxy.
-#   OFF: disarm the proxy and CONFIRM it read back off  BEFORE killing anything.
-# We never trust networksetup's exit code (it lies) — we read the state back.
+# The ONLY thing that can break your net is "proxy armed + no live proxy behind
+# 8899". Three guards make that state impossible:
+#   ON  arms the proxy, then makes a REAL request through it; if nothing flows
+#       it auto-disarms and aborts (self-healing rollback).
+#   OFF disarms the proxy, confirms it read back off, THEN kills mitmdump and
+#       WAITS for it to actually die (SIGKILL if it lingers) — no async lies.
+#   We never trust networksetup's exit code — we read state back / test traffic.
 #
-# macOS requires admin to flip the system proxy. Install the one-time sudoers
-# rule (see README / sudoers.snippet) so on/off run without a password prompt.
+# macOS needs admin to flip the system proxy — via the one-time sudoers rule
+# (sudoers.snippet) so on/off run silently. Without it, `on` aborts cleanly.
 #
 # Usage: collector on | off | status
 set -uo pipefail
@@ -18,70 +20,60 @@ SVC="Wi-Fi"                              # `networksetup -listnetworkserviceorde
 ADDON="$HOME/Code/chat-collector/chat_collector.py"
 LOG="/tmp/chat-collector.log"
 PATTERN="mitmdump.*chat_collector.py"
-BYPASS="localhost 127.0.0.1 *.local"
 NS=/usr/sbin/networksetup
 
-proc_up()  { pgrep -f "$PATTERN" >/dev/null; }
-port_up()  { nc -z 127.0.0.1 "$PORT" 2>/dev/null; }
-proxy_on_readback()  { $NS -getwebproxy "$SVC" | grep -q "Enabled: Yes"; }
+proc_up() { pgrep -f "$PATTERN" >/dev/null; }
+port_up() { nc -z 127.0.0.1 "$PORT" 2>/dev/null; }
+armed()   { $NS -getwebproxy "$SVC" | grep -q "Enabled: Yes"; }
+# a REAL request through the proxy must return an HTTP response
+flows()   { curl -s -o /dev/null --max-time 6 -x "http://127.0.0.1:$PORT" http://example.com; }
 
-start_proc() {
-  proc_up && return 0
+start_proc() {                            # ensure a live proxy serves 8899
+  proc_up && port_up && return 0
   mitmdump -s "$ADDON" -p "$PORT" >"$LOG" 2>&1 &
-  for _ in 1 2 3 4 5 6 7 8 9 10; do port_up && return 0; sleep 0.5; done
+  for _ in $(seq 20); do port_up && return 0; sleep 0.5; done
+  return 1
+}
+stop_proc() {                             # kill AND wait for real death
+  pkill -TERM -f "$PATTERN" 2>/dev/null
+  for _ in $(seq 20); do proc_up || return 0; sleep 0.25; done
+  pkill -KILL -f "$PATTERN" 2>/dev/null   # escalate if it hung
+  for _ in $(seq 8); do proc_up || return 0; sleep 0.25; done
   return 1
 }
 
-# Native macOS password popup (osascript) — one dialog for the whole batch,
-# zero setup. Used when the silent sudo -n path isn't available.
-popup() { osascript -e "do shell script \"$1\" with administrator privileges" >/dev/null 2>&1; }
-have_sudo() { sudo -n true 2>/dev/null; }   # true only if the sudoers rule is installed
-
-arm_proxy() {
-  if have_sudo; then
-    sudo -n $NS -setwebproxy        "$SVC" 127.0.0.1 "$PORT"
-    sudo -n $NS -setsecurewebproxy  "$SVC" 127.0.0.1 "$PORT"
-    sudo -n $NS -setproxybypassdomains "$SVC" localhost 127.0.0.1 '*.local'
-  else
-    popup "$NS -setwebproxy '$SVC' 127.0.0.1 $PORT; \
-           $NS -setsecurewebproxy '$SVC' 127.0.0.1 $PORT; \
-           $NS -setproxybypassdomains '$SVC' localhost 127.0.0.1 '*.local'"
-  fi
-  proxy_on_readback                       # verify, don't trust exit code
+arm_proxy() {                             # needs the sudoers rule (sudoers.snippet)
+  sudo -n $NS -setwebproxy "$SVC" 127.0.0.1 "$PORT" 2>/dev/null
+  sudo -n $NS -setsecurewebproxy "$SVC" 127.0.0.1 "$PORT" 2>/dev/null
+  sudo -n $NS -setproxybypassdomains "$SVC" localhost 127.0.0.1 '*.local' 2>/dev/null
+  armed
 }
 disarm_proxy() {
-  if have_sudo; then
-    sudo -n $NS -setwebproxystate       "$SVC" off
-    sudo -n $NS -setsecurewebproxystate "$SVC" off
-  else
-    popup "$NS -setwebproxystate '$SVC' off; $NS -setsecurewebproxystate '$SVC' off"
-  fi
-  ! proxy_on_readback                     # verify it actually read back OFF
+  sudo -n $NS -setwebproxystate "$SVC" off 2>/dev/null
+  sudo -n $NS -setsecurewebproxystate "$SVC" off 2>/dev/null
+  ! armed                                 # verify it actually read back OFF
 }
 
 case "${1:-status}" in
   on)
-    if ! start_proc; then
-      echo "ABORT: mitmdump did not come up on $PORT — proxy left untouched, net safe"; exit 1
-    fi
-    if arm_proxy; then
+    start_proc || { echo "ABORT: mitmdump didn't come up on $PORT — proxy untouched, net safe"; exit 1; }
+    arm_proxy  || { echo "ABORT: couldn't arm proxy — mitmdump runs but proxy is off, net safe"; exit 1; }
+    if flows; then
       echo "ON — $SVC -> 127.0.0.1:$PORT, dumps in ~/chat-dumps/, log $LOG"
     else
-      echo "ABORT: could not arm proxy (need the sudoers rule?). mitmdump runs but proxy is OFF, net safe"; exit 1
+      disarm_proxy >/dev/null            # AUTO-ROLLBACK: armed but nothing flows
+      echo "ABORT: proxy armed but no traffic flowed through it — disarmed again, net safe"; exit 1
     fi
     ;;
   off)
-    if ! disarm_proxy; then
-      echo "REFUSING to kill mitmdump: proxy is still armed and I can't confirm it's off."
-      echo "  Net would break. Fix the proxy first (sudoers rule / System Settings), then rerun."; exit 1
-    fi
-    pkill -f "$PATTERN" 2>/dev/null && echo "OFF — proxy disarmed (verified), mitmdump stopped" \
-                                    || echo "OFF — proxy disarmed (verified), no mitmdump was running"
+    disarm_proxy || { echo "REFUSING to kill mitmdump: can't confirm proxy is off — net would break. Fix proxy, rerun."; exit 1; }
+    if stop_proc; then echo "OFF — proxy disarmed (verified), mitmdump stopped (confirmed dead)"
+    else               echo "OFF — proxy disarmed, but a mitmdump WON'T DIE; check: pgrep -fl mitmdump"; exit 1; fi
     ;;
   status)
     proc_up && echo "process: UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process: down"
-    proxy_on_readback && echo "proxy:   ARMED -> 127.0.0.1:$PORT (traffic via mitmproxy)" \
-                      || echo "proxy:   off (traffic direct — collection inactive)"
+    armed && echo "proxy:   ARMED -> 127.0.0.1:$PORT (traffic via mitmproxy)" \
+          || echo "proxy:   off (traffic direct — collection inactive)"
     ;;
   *) echo "usage: collector on|off|status"; exit 1;;
 esac
