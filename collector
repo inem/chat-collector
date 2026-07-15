@@ -1,38 +1,72 @@
 #!/bin/bash
-# chat-collector on/off. Flips the proxy process AND the Wi-Fi proxy setting together.
+# chat-collector: one fail-safe handle for the whole thing.
+#
+# The ONLY thing that can break your net is "proxy armed + mitmdump dead".
+# So the rules are absolute:
+#   ON:  start mitmdump and confirm it listens  BEFORE arming the proxy.
+#   OFF: disarm the proxy and CONFIRM it read back off  BEFORE killing anything.
+# We never trust networksetup's exit code (it lies) — we read the state back.
+#
+# macOS requires admin to flip the system proxy. Install the one-time sudoers
+# rule (see README / sudoers.snippet) so on/off run without a password prompt.
+#
 # Usage: collector on | off | status
-set -euo pipefail
+set -uo pipefail
 
 PORT=8899
-SVC="Wi-Fi"                       # network service; `networksetup -listnetworkserviceorder` to check
+SVC="Wi-Fi"                              # `networksetup -listnetworkserviceorder`
 ADDON="$HOME/Code/chat-collector/chat_collector.py"
-PIDFILE="/tmp/chat-collector.pid"
 LOG="/tmp/chat-collector.log"
-BYPASS="localhost 127.0.0.1 *.local"   # keep local dev apps working
+PATTERN="mitmdump.*chat_collector.py"
+BYPASS="localhost 127.0.0.1 *.local"
+NS=/usr/sbin/networksetup
 
-running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+proc_up()  { pgrep -f "$PATTERN" >/dev/null; }
+port_up()  { nc -z 127.0.0.1 "$PORT" 2>/dev/null; }
+proxy_on_readback()  { $NS -getwebproxy "$SVC" | grep -q "Enabled: Yes"; }
+
+start_proc() {
+  proc_up && return 0
+  mitmdump -s "$ADDON" -p "$PORT" >"$LOG" 2>&1 &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do port_up && return 0; sleep 0.5; done
+  return 1
+}
+
+arm_proxy() {
+  sudo -n $NS -setwebproxy        "$SVC" 127.0.0.1 "$PORT"
+  sudo -n $NS -setsecurewebproxy  "$SVC" 127.0.0.1 "$PORT"
+  sudo -n $NS -setproxybypassdomains "$SVC" $BYPASS
+  proxy_on_readback                       # verify, don't trust exit code
+}
+disarm_proxy() {
+  sudo -n $NS -setwebproxystate       "$SVC" off
+  sudo -n $NS -setsecurewebproxystate "$SVC" off
+  ! proxy_on_readback                     # verify it actually read back OFF
+}
 
 case "${1:-status}" in
   on)
-    if running; then echo "already on (pid $(cat "$PIDFILE"))"; exit 0; fi
-    mitmdump -s "$ADDON" -p "$PORT" >"$LOG" 2>&1 &
-    echo $! >"$PIDFILE"
-    networksetup -setwebproxy        "$SVC" 127.0.0.1 "$PORT"
-    networksetup -setsecurewebproxy  "$SVC" 127.0.0.1 "$PORT"
-    networksetup -setproxybypassdomains "$SVC" $BYPASS
-    echo "ON — proxy $SVC -> 127.0.0.1:$PORT, dumps in ~/chat-dumps/, log $LOG"
+    if ! start_proc; then
+      echo "ABORT: mitmdump did not come up on $PORT — proxy left untouched, net safe"; exit 1
+    fi
+    if arm_proxy; then
+      echo "ON — $SVC -> 127.0.0.1:$PORT, dumps in ~/chat-dumps/, log $LOG"
+    else
+      echo "ABORT: could not arm proxy (need the sudoers rule?). mitmdump runs but proxy is OFF, net safe"; exit 1
+    fi
     ;;
   off)
-    networksetup -setwebproxystate       "$SVC" off
-    networksetup -setsecurewebproxystate "$SVC" off
-    running && kill "$(cat "$PIDFILE")" 2>/dev/null || true
-    rm -f "$PIDFILE"
-    echo "OFF — proxy disabled, mitmdump stopped"
+    if ! disarm_proxy; then
+      echo "REFUSING to kill mitmdump: proxy is still armed and I can't confirm it's off."
+      echo "  Net would break. Fix the proxy first (sudoers rule / System Settings), then rerun."; exit 1
+    fi
+    pkill -f "$PATTERN" 2>/dev/null && echo "OFF — proxy disarmed (verified), mitmdump stopped" \
+                                    || echo "OFF — proxy disarmed (verified), no mitmdump was running"
     ;;
   status)
-    running && echo "collector: ON (pid $(cat "$PIDFILE"))" || echo "collector: OFF"
-    networksetup -getwebproxy "$SVC" | sed 's/^/  web:  /'
+    proc_up && echo "process: UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process: down"
+    proxy_on_readback && echo "proxy:   ARMED -> 127.0.0.1:$PORT (traffic via mitmproxy)" \
+                      || echo "proxy:   off (traffic direct — collection inactive)"
     ;;
-  *)
-    echo "usage: collector on|off|status"; exit 1;;
+  *) echo "usage: collector on|off|status"; exit 1;;
 esac

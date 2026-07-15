@@ -21,21 +21,41 @@ brew install mitmproxy
 
 ## On / off
 
-`collector` flips both tumblers at once — the mitmdump process **and** the Wi-Fi
-proxy setting — so you never leave the browser pointed at a dead proxy:
-
 ```bash
-collector on       # start proxy + point Wi-Fi at it
-collector off      # disable Wi-Fi proxy + stop mitmdump
-collector status   # is it running? what's the proxy set to?
+collector on       # start mitmdump, confirm it's up, THEN arm the proxy
+collector off      # disarm the proxy, confirm it's off, THEN stop mitmdump
+collector status   # process up? proxy armed or direct?
 ```
 
-Dumps land in `~/chat-dumps/<service>/<conversation-id>.json`; log at
-`/tmp/chat-collector.log`. Edit `SVC` in the script if your network service
-isn't `Wi-Fi` (`networksetup -listnetworkserviceorder` to check).
+**Fail-safe by construction.** The only way a proxy setup breaks your net is
+"proxy armed at a port with no live proxy behind it". So the handle enforces
+strict ordering and never trusts `networksetup`'s exit code — it reads the
+state back:
 
-The CA cert still has to be trusted **once** (see below) before `on` captures
-anything over TLS.
+- `on` won't arm the proxy until mitmdump is actually listening on the port.
+- `off` won't kill mitmdump until it has **confirmed** the proxy read back off.
+  Can't confirm? It refuses to kill and tells you — your net stays up.
+
+`off` means *truly off*: proxy disarmed, traffic direct, mitmproxy out of the
+path. Dumps land in `~/chat-dumps/<service>/<id>.json`; log `/tmp/chat-collector.log`.
+Edit `SVC` if your network service isn't `Wi-Fi`
+(`networksetup -listnetworkserviceorder`).
+
+### The one admin gate
+
+macOS requires admin to flip the system proxy. So on/off run
+`sudo -n networksetup …` — which never prompts and never hangs, but needs a
+one-time passwordless rule scoped to *only* the proxy subcommands:
+
+```bash
+sudo visudo -f /etc/sudoers.d/chat-collector
+# paste sudoers.snippet (edit the username), save — visudo syntax-checks it
+```
+
+Without this rule, on/off fail fast and tell you to install it — they never
+hang and never half-apply.
+
+The CA cert must also be trusted **once** (below) before `on` captures TLS.
 
 ## Run it by hand instead
 
