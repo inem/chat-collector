@@ -32,15 +32,30 @@ start_proc() {
   return 1
 }
 
+# Native macOS password popup (osascript) — one dialog for the whole batch,
+# zero setup. Used when the silent sudo -n path isn't available.
+popup() { osascript -e "do shell script \"$1\" with administrator privileges" >/dev/null 2>&1; }
+have_sudo() { sudo -n true 2>/dev/null; }   # true only if the sudoers rule is installed
+
 arm_proxy() {
-  sudo -n $NS -setwebproxy        "$SVC" 127.0.0.1 "$PORT"
-  sudo -n $NS -setsecurewebproxy  "$SVC" 127.0.0.1 "$PORT"
-  sudo -n $NS -setproxybypassdomains "$SVC" $BYPASS
+  if have_sudo; then
+    sudo -n $NS -setwebproxy        "$SVC" 127.0.0.1 "$PORT"
+    sudo -n $NS -setsecurewebproxy  "$SVC" 127.0.0.1 "$PORT"
+    sudo -n $NS -setproxybypassdomains "$SVC" localhost 127.0.0.1 '*.local'
+  else
+    popup "$NS -setwebproxy '$SVC' 127.0.0.1 $PORT; \
+           $NS -setsecurewebproxy '$SVC' 127.0.0.1 $PORT; \
+           $NS -setproxybypassdomains '$SVC' localhost 127.0.0.1 '*.local'"
+  fi
   proxy_on_readback                       # verify, don't trust exit code
 }
 disarm_proxy() {
-  sudo -n $NS -setwebproxystate       "$SVC" off
-  sudo -n $NS -setsecurewebproxystate "$SVC" off
+  if have_sudo; then
+    sudo -n $NS -setwebproxystate       "$SVC" off
+    sudo -n $NS -setsecurewebproxystate "$SVC" off
+  else
+    popup "$NS -setwebproxystate '$SVC' off; $NS -setsecurewebproxystate '$SVC' off"
+  fi
   ! proxy_on_readback                     # verify it actually read back OFF
 }
 

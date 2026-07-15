@@ -43,17 +43,20 @@ Edit `SVC` if your network service isn't `Wi-Fi`
 
 ### The one admin gate
 
-macOS requires admin to flip the system proxy. So on/off run
-`sudo -n networksetup …` — which never prompts and never hangs, but needs a
-one-time passwordless rule scoped to *only* the proxy subcommands:
+macOS requires admin to flip the system proxy. Out of the box, on/off show the
+**native password popup** (one dialog per toggle, whole batch at once) — zero
+setup.
+
+Tired of the popup? Add a one-time passwordless rule scoped to *only* the proxy
+subcommands, and on/off go silent:
 
 ```bash
 sudo visudo -f /etc/sudoers.d/chat-collector
 # paste sudoers.snippet (edit the username), save — visudo syntax-checks it
 ```
 
-Without this rule, on/off fail fast and tell you to install it — they never
-hang and never half-apply.
+The script tries the silent `sudo -n` path first and falls back to the popup,
+so the rule is a pure upgrade — never required.
 
 The CA cert must also be trusted **once** (below) before `on` captures TLS.
 
