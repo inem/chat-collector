@@ -13,6 +13,9 @@ Overwrite = latest full snapshot. Domain-agnostic: add a service, add a row.
 - **mitmproxy** is the one layer that's domain-agnostic *and* survives a
   hostile browser: it sees every response, you just filter by URL.
 
+For how the pieces relate (lifecycle / routing / collection as A—r—B triples),
+see [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## The model: leave it always on
 
 mitmproxy is cheap — ~0% CPU idle, ~130 MB RAM. There is no resource reason to
