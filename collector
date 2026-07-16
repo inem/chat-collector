@@ -136,28 +136,28 @@ case "${1:-status}" in
     bad()  { echo "  ${R}✗${Z} $1"; echo "     ${D}fix: $2${Z}"; }
     echo
     command -v mitmdump >/dev/null \
-      && ok "mitmproxy installed" \
-      || bad "mitmproxy not installed" "brew install mitmproxy"
+      && ok "the recorder program is installed  ${D}(mitmproxy)${Z}" \
+      || bad "recorder program missing — nothing to record with" "brew install mitmproxy"
 
     [ -f "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" ] \
-      && ok "CA cert generated" \
-      || bad "no CA cert yet (run mitmdump once to generate)" "launchctl load -w ~/Library/LaunchAgents/com.chat-collector.plist"
+      && ok "recorder has its key to unlock HTTPS  ${D}(CA cert generated)${Z}" \
+      || bad "no HTTPS key yet — encrypted traffic stays unreadable" "start the recorder once: launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.chat-collector.plist"
 
     security find-certificate -c mitmproxy >/dev/null 2>&1 \
-      && ok "CA cert in a keychain  ${D}(verify it's TRUSTED: open mitm.it in the browser with proxy on)${Z}" \
-      || bad "CA cert not trusted — HTTPS won't decrypt" "open http://mitm.it with the proxy on, install the cert, mark it Always Trust"
+      && ok "your Mac trusts the recorder to open HTTPS  ${D}(verify: open mitm.it with the proxy on)${Z}" \
+      || bad "your Mac doesn't trust the recorder — HTTPS won't decrypt" "open http://mitm.it with the proxy on, install the cert, mark it Always Trust"
 
     launchctl print "gui/$(id -u)/com.chat-collector" >/dev/null 2>&1 \
-      && ok "always-on service loaded (launchd)" \
-      || bad "launchd service not loaded — recorder won't auto-start" "cp com.chat-collector.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.chat-collector.plist"
+      && ok "recorder restarts itself — survives login & crashes  ${D}(launchd)${Z}" \
+      || bad "recorder won't come back after reboot/crash" "cp com.chat-collector.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.chat-collector.plist"
 
     sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1 \
-      && ok "sudoers rule present — on/off run silently" \
-      || bad "no sudoers rule — 'collector on' will need a password" "sudo visudo -f /etc/sudoers.d/chat-collector  (paste sudoers.snippet)"
+      && ok "turning capture on/off won't ask for a password  ${D}(sudoers rule)${Z}" \
+      || bad "'collector on' will prompt for a password each time" "sudo visudo -f /etc/sudoers.d/chat-collector  (paste sudoers.snippet)"
 
     port_up \
-      && ok "port $PORT is responding" \
-      || bad "nothing listening on $PORT — recorder is down" "launchctl kickstart -k gui/$(id -u)/com.chat-collector"
+      && ok "recorder is live and accepting traffic right now  ${D}(port $PORT)${Z}" \
+      || bad "recorder isn't answering — it's down right now" "launchctl kickstart -k gui/\$(id -u)/com.chat-collector"
     echo
     ;;
   *) echo "usage: collector on|off|status [-v]|doctor"; exit 1;;
