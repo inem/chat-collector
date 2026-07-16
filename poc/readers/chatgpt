@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+# reader:chatgpt — one plugged reader. Reads stream records on stdin,
+# keeps the ones that are full ChatGPT conversations, writes them out.
+# This is what used to be hardcoded in capture; now it's just a plug.
+import sys, json, os, re
+
+UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+RX = re.compile(r"/backend-api/conversation/(?P<id>" + UUID + r")(?:$|\?)")
+OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/chatgpt")
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rec = json.loads(line)
+    except Exception:
+        continue
+    m = RX.search(rec.get("url", ""))
+    if not m or rec.get("status") != 200:
+        continue
+    try:
+        data = json.loads(rec.get("body", ""))
+    except Exception:
+        continue
+    os.makedirs(OUT, exist_ok=True)
+    with open(os.path.join(OUT, m.group("id") + ".json"), "w") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    print(f"[reader:chatgpt] wrote {m.group('id')}.json", file=sys.stderr)

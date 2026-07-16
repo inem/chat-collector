@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# reader:urls — a different guy, in a different language (bash).
+# Dumb traffic map: logs the host of every record it sees. Ignores nothing.
+while IFS= read -r line; do
+  url=$(printf '%s' "$line" | sed -n 's/.*"url": *"\([^"]*\)".*/\1/p')
+  host=$(printf '%s' "$url" | sed -n 's|https\{0,1\}://\([^/]*\)/.*|\1|p')
+  [ -n "$host" ] && echo "[reader:urls] saw $host" >&2
+done
