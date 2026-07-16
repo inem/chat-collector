@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-# reader:youtube — broad net on YouTube's InnerTube API (/youtubei/v1/...).
-# v0 = detect stage: dump whatever flows on that surface, one file per endpoint
-# (player, browse, next, search...). Prefix known-from-general-knowledge,
-# UNVERIFIED against real traffic — narrow into real extractors once we see it.
+# reader:youtube — traffic-informed (promoted from a blind net after seeing real
+# browsing in /tmp/chat-collector.log). Keeps the content-bearing endpoints,
+# skips the telemetry firehose. Tune the sets as more traffic shows up.
+#
+# CONTENT observed:  youtubei/v1/{player,browse,get_watch,guide,live_chat/*},
+#                    /api/timedtext  (subtitles — NOT under youtubei/, matched separately)
+# NOISE observed:    updated_metadata, log_event, player/heartbeat, api/stats/*, qoe
 import sys, json, os, re
 
-PREFIX = "/youtubei/v1/"
 OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/youtube")
+KEEP = re.compile(r"/youtubei/v1/(player|browse|get_watch|guide|search|live_chat/[a-z_]+)(?:$|\?)"
+                  r"|/api/timedtext")
+SKIP = re.compile(r"updated_metadata|log_event|heartbeat|/api/stats/|/qoe")
 
 def slug(url):
     path = re.sub(r"^https?://[^/]+", "", url).split("?")[0]
@@ -20,14 +25,14 @@ for line in sys.stdin:
         rec = json.loads(line)
     except Exception:
         continue
-    if PREFIX not in rec.get("url", "") or rec.get("status") != 200:
+    url = rec.get("url", "")
+    if rec.get("status") != 200 or SKIP.search(url) or not KEEP.search(url):
         continue
     os.makedirs(OUT, exist_ok=True)
-    name = slug(rec["url"])
+    name = slug(url)
     body = rec.get("body", "")
     try:
-        data = json.loads(body)
-        out = json.dumps(data, ensure_ascii=False, indent=2)
+        out = json.dumps(json.loads(body), ensure_ascii=False, indent=2)
     except Exception:
         out = body
     with open(os.path.join(OUT, name + ".json"), "w") as f:
