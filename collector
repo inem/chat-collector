@@ -74,23 +74,33 @@ case "${1:-status}" in
     else               echo "OFF — proxy disarmed, but a mitmdump WON'T DIE; check: pgrep -fl mitmdump"; exit 1; fi
     ;;
   status)
-    proc_up && echo "process:      UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process:      down"
-    echo "-- layer 1: system proxy (Arc / GUI apps) --"
-    echo "proxy http:   $($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')"
-    echo "proxy https:  $($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')"
-    echo "-- layer 2: env vars (CLI tools + apps launched with them; collector CANNOT change these for a running app) --"
-    if [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; then
-      echo "HTTP(S)_PROXY: SET -> ${HTTPS_PROXY:-$HTTP_PROXY}  (this shell/app is pinned here regardless of layer 1)"
+    if [ -t 1 ]; then G=$'\e[32m'; D=$'\e[2m'; R=$'\e[31m'; Y=$'\e[33m'; Z=$'\e[0m'; else G= D= R= Y= Z=; fi
+    env_set() { [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; }
+
+    if [ "${2:-}" = "--verbose" ] || [ "${2:-}" = "-v" ]; then
+      proc_up && echo "process:      UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process:      down"
+      echo "-- layer 1: system proxy (Arc / GUI apps) --"
+      echo "proxy http:   $($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')"
+      echo "proxy https:  $($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')"
+      echo "-- layer 2: env vars (CLI tools + apps launched with them; collector CANNOT change these for a running app) --"
+      env_set && echo "HTTP(S)_PROXY: SET -> ${HTTPS_PROXY:-$HTTP_PROXY}  (this shell/app is pinned here regardless of layer 1)" \
+              || echo "HTTP(S)_PROXY: unset (in this shell)"
+      echo "-- verdict (layer 1 only) --"
+      if armed; then
+        proc_up && echo "VERDICT: LIVE — traffic goes THROUGH mitmproxy. Killing it breaks your net until 'collector off'." \
+                || echo "VERDICT: DANGER — proxy armed but mitmproxy is DEAD. Your net is broken. Run: collector off"
+      else
+        echo "VERDICT: SAFE — no proxy armed. mitmproxy can't touch your traffic; kill it freely."
+      fi
     else
-      echo "HTTP(S)_PROXY: unset (in this shell)"
-    fi
-    echo "-- verdict (layer 1 only) --"
-    # the one line that tells you if you're in control:
-    if armed; then
-      proc_up && echo "VERDICT: LIVE — traffic goes THROUGH mitmproxy. Killing it breaks your net until you 'collector off'." \
-              || echo "VERDICT: DANGER — proxy armed but mitmproxy is DEAD. Your net is broken right now. Run: collector off"
-    else
-      echo "VERDICT: SAFE — no proxy armed. mitmproxy can't touch your traffic; kill it freely."
+      # compact: three aligned lines + a warning only when something's wrong
+      if proc_up; then echo "mitmproxy  ${G}●${Z} up ${D}· $(pgrep -f "$PATTERN" | head -1)${Z}"
+      else             echo "mitmproxy  ${R}✗ down${Z} ${D}· not running${Z}"; fi
+      armed   && echo "browser    ${G}● capturing${Z}"                      || echo "browser    ${D}○ direct${Z}   ${D}(collector on)${Z}"
+      env_set && echo "cli        ${G}● via proxy${Z}"                      || echo "cli        ${D}○ direct${Z}"
+      if ! proc_up && { armed || env_set; }; then
+        echo "${Y}⚠  proxy is set but mitmproxy is down — traffic through it is broken.${Z}"
+      fi
     fi
     ;;
   *) echo "usage: collector on|off|status"; exit 1;;

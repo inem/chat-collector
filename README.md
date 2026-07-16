@@ -78,24 +78,22 @@ Dumps land in `~/chat-dumps/<service>/<id>.json`; log `/tmp/chat-collector.log`.
 ## `collector` — manage the system-proxy (browser) layer
 
 ```bash
-collector on       # arm the system proxy (browser traffic -> mitmproxy)
-collector off      # disarm it (browser traffic direct again)
-collector status   # both layers + a plain verdict
+collector on              # arm the system proxy (browser traffic -> mitmproxy)
+collector off             # disarm it (browser traffic direct again)
+collector status          # compact: is mitm up? is each layer captured?
+collector status -v       # verbose: both proxy layers + a plain verdict
 ```
 
-`status` reports **both** layers and a one-line verdict so you always know
-whether killing mitmproxy would break anything:
+Compact `status` is a quick glance:
 
 ```
-process:      UP (12345)
--- layer 1: system proxy (Arc / GUI apps) --
-proxy http:   No
-proxy https:  No
--- layer 2: env vars (CLI tools + apps launched with them) --
-HTTP(S)_PROXY: unset (in this shell)
--- verdict (layer 1 only) --
-VERDICT: SAFE — no proxy armed. mitmproxy can't touch your traffic.
+mitmproxy  ● up · 12345
+browser    ● capturing
+cli        ○ direct
 ```
+
+`status -v` (or `--verbose`) spells out both layers and a one-line verdict so
+you always know whether killing mitmproxy would break anything.
 
 **Fail-safe.** `on` arms the proxy then makes a real request through it and
 auto-disarms if nothing flows. `off` disarms and confirms it read back off
