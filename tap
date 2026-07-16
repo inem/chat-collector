@@ -184,9 +184,14 @@ case "${1:-status}" in
          echo "     proxy off, traffic direct. investigate: tail $LOG"; fi
     echo
     echo "  ${D}manual steps (admin), in order:${Z}"
-    echo "  ${D}1.${Z} sudo visudo -f /etc/sudoers.d/tap   (paste sudoers.snippet, username = $(id -un))"
-    echo "  ${D}2.${Z} tap on"
-    echo "  ${D}3.${Z} open http://mitm.it (proxy on) → install cert → Always Trust"
+    echo
+    echo "  ${D}1.${Z} allow proxy toggle:   ${D}sudo visudo -f /etc/sudoers.d/tap${Z}"
+    echo "     ${D}paste exactly this (your username already filled in):${Z}"
+    sed "s/^inem /$(id -un) /" "$REPO/sudoers.snippet" | grep -v '^#' | grep -v '^$' | sed 's/^/       /'
+    echo
+    echo "  ${D}2.${Z} start capturing:      ${D}tap on${Z}"
+    echo "  ${D}3.${Z} trust the cert:       ${D}open http://mitm.it (proxy on) → install → Always Trust${Z}"
+    echo
     echo "  ${D}then: tap doctor  ·  read side (orchestrator+readers) is Phase 2${Z}"
     echo
     ;;
