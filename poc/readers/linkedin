@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+# reader:linkedin — broad net on LinkedIn's Voyager API (/voyager/api/...).
+# v0 = detect stage: dump whatever flows on that surface, one file per endpoint.
+# The prefix is known-from-general-knowledge, UNVERIFIED against real traffic —
+# once we see the actual stream we narrow this into real extractors.
+import sys, json, os, re
+
+PREFIX = "/voyager/api/"
+OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/linkedin")
+
+def slug(url):
+    path = re.sub(r"^https?://[^/]+", "", url).split("?")[0]
+    return re.sub(r"[^a-zA-Z0-9]+", "-", path).strip("-")[:120] or "root"
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        rec = json.loads(line)
+    except Exception:
+        continue
+    if PREFIX not in rec.get("url", "") or rec.get("status") != 200:
+        continue
+    os.makedirs(OUT, exist_ok=True)
+    name = slug(rec["url"])
+    body = rec.get("body", "")
+    try:
+        data = json.loads(body)
+        out = json.dumps(data, ensure_ascii=False, indent=2)
+    except Exception:
+        out = body
+    with open(os.path.join(OUT, name + ".json"), "w") as f:
+        f.write(out)
+    print(f"[reader:linkedin] {name}", file=sys.stderr)
