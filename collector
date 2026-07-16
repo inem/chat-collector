@@ -58,7 +58,6 @@ disarm_proxy() {
 }
 
 if [ -t 1 ]; then G=$'\e[32m'; D=$'\e[2m'; R=$'\e[31m'; Y=$'\e[33m'; Z=$'\e[0m'; else G= D= R= Y= Z=; fi
-env_set() { [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; }
 
 case "${1:-status}" in
   on)
@@ -98,35 +97,24 @@ case "${1:-status}" in
       fi
       echo "     ${D}(system proxy: http=$wh  https=$ws)${Z}"
       echo
-      if env_set; then
-        echo "  ${G}●${Z} cli/apps   ${D}via proxy${Z}"
-        echo "     ${D}terminal tools & apps started here route through mitmproxy${Z}"
-        echo "     ${Y}     …and lose the network if it dies — that's the sharp edge${Z}"
-        echo "     ${D}(HTTP(S)_PROXY = ${HTTPS_PROXY:-$HTTP_PROXY})${Z}"
-      else
-        echo "  ${D}○ cli/apps   direct${Z}"
-        echo "     ${D}terminal tools & the Claude app are NOT recorded${Z}"
-      fi
-      echo
       echo "  ${D}────────${Z}"
-      if ! proc_up && { armed || env_set; }; then
-        echo "  ${Y}⚠ broken: a proxy is set but the recorder is down. Run 'collector off' or restart the service.${Z}"
-      elif proc_up && { armed || env_set; }; then
+      if ! proc_up && armed; then
+        echo "  ${Y}⚠ broken: the proxy is armed but the recorder is down. Run 'collector off' or restart the service.${Z}"
+      elif proc_up && armed; then
         echo "  ${G}✓ recording${Z} ${D}— launchd keeps mitmproxy up, so nothing breaks.${Z}"
       elif proc_up; then
         echo "  ${D}○ idle — recorder up but capturing nothing. 'collector on' to record the browser.${Z}"
       else
-        echo "  ${D}○ off — recorder down, nothing routed. all traffic is direct.${Z}"
+        echo "  ${D}○ off — recorder down, browser direct.${Z}"
       fi
       echo
     else
-      # compact: three aligned lines + a warning only when something's wrong
+      # compact: two aligned lines + a warning only when something's wrong
       if proc_up; then echo "mitmproxy  ${G}●${Z} up ${D}· $(pgrep -f "$PATTERN" | head -1)${Z}"
       else             echo "mitmproxy  ${R}✗ down${Z} ${D}· not running${Z}"; fi
-      armed   && echo "browser    ${G}● capturing${Z}"                      || echo "browser    ${D}○ direct${Z}   ${D}(collector on)${Z}"
-      env_set && echo "cli        ${G}● via proxy${Z}"                      || echo "cli        ${D}○ direct${Z}"
-      if ! proc_up && { armed || env_set; }; then
-        echo "${Y}⚠  proxy is set but mitmproxy is down — traffic through it is broken.${Z}"
+      armed && echo "browser    ${G}● capturing${Z}"                        || echo "browser    ${D}○ direct${Z}   ${D}(collector on)${Z}"
+      if ! proc_up && armed; then
+        echo "${Y}⚠  proxy armed but mitmproxy is down — browser traffic is broken.${Z}"
       fi
     fi
     ;;

@@ -20,25 +20,13 @@ toggle it. And toggling the *plumbing* is exactly what bites you (see below), so
 the recommended setup is **always-on**: mitmproxy runs as a launchd service, and
 you never tear it down.
 
-### Two proxy layers — know which one you're using
+This version captures **browser** traffic. The browser follows the macOS system
+proxy, which `collector on/off` arms and disarms.
 
-Traffic reaches mitmproxy through **two independent mechanisms**. Confusing them
-causes every "why did my net break" moment:
-
-| Layer | Set via | Who routes through it |
-|-------|---------|-----------------------|
-| **System proxy** | `networksetup` (what `collector` manages) | GUI apps: **browsers (Arc, Chrome…)** |
-| **Env vars** | `HTTP_PROXY` / `HTTPS_PROXY` in a process's environment | CLI tools + any app *launched with them set* |
-
-Capturing **browser** chat sessions (the point of this tool) only needs the
-**system proxy** layer. The env-var layer is a separate opt-in for capturing
-your own CLI/app traffic — and it's the sharp edge: env vars are fixed at
-process launch and can't be changed for a running app, so an app pinned to
-`127.0.0.1:8899` **breaks the instant mitmproxy dies** and does *not* recover
-when you disarm the system proxy. Only a relaunch of that app fixes it.
-
-That's the whole case for always-on: if mitmproxy never dies, nothing pinned to
-it ever breaks.
+CLI tools and non-browser apps don't follow the system proxy (they use
+`HTTP_PROXY`/`HTTPS_PROXY` env vars instead), so they go direct and aren't
+captured. That's out of scope here — see [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) if
+you ever want to add it.
 
 ## Install
 
