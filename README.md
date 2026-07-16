@@ -83,11 +83,12 @@ collector off             # disarm it (browser traffic direct again)
 collector status          # compact: is mitm up? is each layer captured?
 collector status -v       # verbose: both proxy layers + a plain verdict
 collector doctor          # one-time setup health: cert / service / rule / port
+collector where           # map of every file this tool touches
 ```
 
 `status` answers "what's happening **now**" (runtime). `doctor` answers "is it
-**set up** right" (cert trusted? launchd loaded? sudoers present? port live?) —
-each check prints ● ok or ✗ with the fix command.
+**set up** right" — each check prints ● ok (with its related file) or ✗ with a
+fix command. `where` prints the file map: code, system installs, and outputs.
 
 Compact `status` is a quick glance:
 
