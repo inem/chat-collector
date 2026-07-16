@@ -78,20 +78,47 @@ case "${1:-status}" in
     env_set() { [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; }
 
     if [ "${2:-}" = "--verbose" ] || [ "${2:-}" = "-v" ]; then
-      proc_up && echo "process:      UP ($(pgrep -f "$PATTERN" | tr '\n' ' '))" || echo "process:      down"
-      echo "-- layer 1: system proxy (Arc / GUI apps) --"
-      echo "proxy http:   $($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')"
-      echo "proxy https:  $($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')"
-      echo "-- layer 2: env vars (CLI tools + apps launched with them; collector CANNOT change these for a running app) --"
-      env_set && echo "HTTP(S)_PROXY: SET -> ${HTTPS_PROXY:-$HTTP_PROXY}  (this shell/app is pinned here regardless of layer 1)" \
-              || echo "HTTP(S)_PROXY: unset (in this shell)"
-      echo "-- verdict (layer 1 only) --"
-      if armed; then
-        proc_up && echo "VERDICT: LIVE — traffic goes THROUGH mitmproxy. Killing it breaks your net until 'collector off'." \
-                || echo "VERDICT: DANGER — proxy armed but mitmproxy is DEAD. Your net is broken. Run: collector off"
+      wh=$($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')
+      ws=$($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')
+      echo
+      if proc_up; then
+        echo "  ${G}●${Z} mitmproxy  ${D}· $(pgrep -f "$PATTERN" | head -1)${Z}"
+        echo "     ${D}the always-on recorder. anything captured passes through here.${Z}"
       else
-        echo "VERDICT: SAFE — no proxy armed. mitmproxy can't touch your traffic; kill it freely."
+        echo "  ${R}✗ mitmproxy — not running${Z}"
+        echo "     ${D}nothing is being recorded right now.${Z}"
       fi
+      echo
+      if armed; then
+        echo "  ${G}●${Z} browser    ${D}capturing${Z}"
+        echo "     ${D}your browser's traffic is recorded to ~/chat-dumps${Z}"
+      else
+        echo "  ${D}○ browser    direct${Z}"
+        echo "     ${D}browser is NOT recorded — run 'collector on' to start${Z}"
+      fi
+      echo "     ${D}(system proxy: http=$wh  https=$ws)${Z}"
+      echo
+      if env_set; then
+        echo "  ${G}●${Z} cli/apps   ${D}via proxy${Z}"
+        echo "     ${D}terminal tools & apps started here route through mitmproxy${Z}"
+        echo "     ${Y}     …and lose the network if it dies — that's the sharp edge${Z}"
+        echo "     ${D}(HTTP(S)_PROXY = ${HTTPS_PROXY:-$HTTP_PROXY})${Z}"
+      else
+        echo "  ${D}○ cli/apps   direct${Z}"
+        echo "     ${D}terminal tools & the Claude app are NOT recorded${Z}"
+      fi
+      echo
+      echo "  ${D}────────${Z}"
+      if ! proc_up && { armed || env_set; }; then
+        echo "  ${Y}⚠ broken: a proxy is set but the recorder is down. Run 'collector off' or restart the service.${Z}"
+      elif proc_up && { armed || env_set; }; then
+        echo "  ${G}✓ recording${Z} ${D}— launchd keeps mitmproxy up, so nothing breaks.${Z}"
+      elif proc_up; then
+        echo "  ${D}○ idle — recorder up but capturing nothing. 'collector on' to record the browser.${Z}"
+      else
+        echo "  ${D}○ off — recorder down, nothing routed. all traffic is direct.${Z}"
+      fi
+      echo
     else
       # compact: three aligned lines + a warning only when something's wrong
       if proc_up; then echo "mitmproxy  ${G}●${Z} up ${D}· $(pgrep -f "$PATTERN" | head -1)${Z}"
