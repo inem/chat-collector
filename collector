@@ -17,10 +17,15 @@ set -uo pipefail
 
 PORT=8899
 SVC="Wi-Fi"                              # `networksetup -listnetworkserviceorder`
-ADDON="$HOME/Code/chat-collector/chat_collector.py"
 LOG="/tmp/chat-collector.log"
 PATTERN="mitmdump.*chat_collector.py"
 NS=/usr/sbin/networksetup
+
+# resolve this script's real dir (following the PATH symlink) so paths aren't
+# hardcoded — the tool works wherever you cloned it.
+SELF="${BASH_SOURCE[0]}"; while [ -L "$SELF" ]; do SELF="$(readlink "$SELF")"; done
+REPO="$(cd "$(dirname "$SELF")" && pwd)"
+ADDON="$REPO/chat_collector.py"
 
 proc_up() { pgrep -f "$PATTERN" >/dev/null; }
 port_up() { nc -z 127.0.0.1 "$PORT" 2>/dev/null; }
@@ -148,6 +153,58 @@ case "${1:-status}" in
       || bad "recorder is down right now" "launchctl kickstart -k gui/\$(id -u)/com.chat-collector"
     echo
     ;;
+  install)
+    echo
+    MITM=$(command -v mitmdump || true)
+    [ -n "$MITM" ] || { echo "  ${R}✗${Z} mitmproxy not installed — run: brew install mitmproxy, then rerun."; exit 1; }
+
+    mkdir -p "$HOME/.local/bin"
+    ln -sf "$REPO/collector" "$HOME/.local/bin/collector"
+    echo "  ${G}●${Z} linked  ~/.local/bin/collector -> this repo"
+    case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "     ${Y}note: add ~/.local/bin to PATH in ~/.zshrc${Z}";; esac
+
+    PLIST="$HOME/Library/LaunchAgents/com.chat-collector.plist"
+    cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.chat-collector</string>
+  <key>ProgramArguments</key><array>
+    <string>$MITM</string><string>-s</string><string>$ADDON</string><string>-p</string><string>$PORT</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
+</dict></plist>
+EOF
+    if launchctl print "gui/$(id -u)/com.chat-collector" >/dev/null 2>&1; then
+      echo "  ${G}●${Z} always-on service already loaded ${D}(kickstart to reload: launchctl kickstart -k gui/$(id -u)/com.chat-collector)${Z}"
+    elif launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null; then
+      echo "  ${G}●${Z} always-on service loaded (survives reboot)"
+    else
+      echo "  ${Y}⚠${Z} service not loaded ${D}(port $PORT busy? stop the old mitmdump, then: launchctl bootstrap gui/$(id -u) \"$PLIST\")${Z}"
+    fi
+
+    echo
+    echo "  ${D}3 manual steps left — do them in order:${Z}"
+    echo
+    echo "  ${D}1.${Z} allow proxy toggle (needs your password once):"
+    echo "     ${D}sudo visudo -f /etc/sudoers.d/chat-collector${Z}"
+    echo "     ${D}paste exactly this, then save:${Z}"
+    echo "       Cmnd_Alias CHATPROXY = /usr/sbin/networksetup -setwebproxy *, \\"
+    echo "                              /usr/sbin/networksetup -setsecurewebproxy *, \\"
+    echo "                              /usr/sbin/networksetup -setwebproxystate *, \\"
+    echo "                              /usr/sbin/networksetup -setsecurewebproxystate *, \\"
+    echo "                              /usr/sbin/networksetup -setproxybypassdomains *"
+    echo "       $(id -un) ALL=(root) NOPASSWD: CHATPROXY"
+    echo
+    echo "  ${D}2.${Z} start capturing:   ${D}collector on${Z}"
+    echo "  ${D}3.${Z} trust the cert:    ${D}open http://mitm.it (proxy now on) → install → Always Trust${Z}"
+    echo
+    echo "  ${D}then check:  collector doctor${Z}"
+    echo
+    ;;
   where)
     echo
     echo "  ${D}you run${Z}"
@@ -169,5 +226,5 @@ case "${1:-status}" in
     echo "    /tmp/chat-collector.log                         ${D}what the recorder is doing${Z}"
     echo
     ;;
-  *) echo "usage: collector on|off|status [-v]|doctor|where"; exit 1;;
+  *) echo "usage: collector install|on|off|status [-v]|doctor|where"; exit 1;;
 esac

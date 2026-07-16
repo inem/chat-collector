@@ -30,48 +30,38 @@ CLI tools and non-browser apps don't follow the system proxy (they use
 captured. That's out of scope here — see [OUT-OF-SCOPE.md](OUT-OF-SCOPE.md) if
 you ever want to add it.
 
-## Install
+## Setup from scratch
 
 ```bash
 brew install mitmproxy
+git clone <this-repo> ~/Code/chat-collector    # or anywhere — paths auto-resolve
+cd ~/Code/chat-collector
+./collector install
 ```
 
-### 1. Always-on service (launchd)
+`collector install` does the mechanical parts — puts `collector` on your PATH,
+generates the launchd service with the right paths for wherever you cloned it,
+and starts it — then prints **3 manual steps** to finish (they need admin, so
+you do them yourself):
 
-`com.chat-collector.plist` runs mitmdump with `KeepAlive` + `RunAtLoad` —
-starts at login, restarts if it ever dies, survives reboot.
+1. **Allow the proxy toggle** — paste the printed rule into
+   `sudo visudo -f /etc/sudoers.d/chat-collector` (the username is filled in for
+   you). Required, since `collector on/off` flip the system proxy.
+2. **Start capturing** — `collector on`.
+3. **Trust the cert** — open [mitm.it](http://mitm.it) with the proxy on,
+   install the cert, mark it **Always Trust**. Without this, HTTPS won't decrypt.
 
-```bash
-cp com.chat-collector.plist ~/Library/LaunchAgents/
-launchctl load -w ~/Library/LaunchAgents/com.chat-collector.plist
-```
-
-If a mitmdump is already running on 8899, stop it first (`pkill -f
-chat_collector.py`) so launchd owns the one on the port.
-
-### 2. Trust the CA cert (once)
-
-First run generates `~/.mitmproxy/mitmproxy-ca-cert.pem`. Add it to the login
-keychain and mark it trusted, or visit [mitm.it](http://mitm.it) with the proxy
-armed. Without this, TLS won't decrypt and nothing is captured.
-
-### 3. Point the browser at it
-
-Arm the system proxy so your browser routes through 8899:
-
-```bash
-collector on     # arm system proxy -> 127.0.0.1:8899 (Wi-Fi)
-```
-
-Dumps land in `~/chat-dumps/<service>/<id>.json`; log `/tmp/chat-collector.log`.
+Then `collector doctor` should show all ●. Dumps land in
+`~/chat-dumps/<service>/<id>.json`; log at `/tmp/chat-collector.log`.
 
 ## `collector` — manage the system-proxy (browser) layer
 
 ```bash
-collector on              # arm the system proxy (browser traffic -> mitmproxy)
-collector off             # disarm it (browser traffic direct again)
-collector status          # compact: is mitm up? is each layer captured?
-collector status -v       # verbose: both proxy layers + a plain verdict
+collector install         # from-scratch setup (PATH, launchd service) + next steps
+collector on              # arm the system proxy (browser/app traffic -> mitmproxy)
+collector off             # disarm it (traffic direct again)
+collector status          # compact: is mitm up? is capture on?
+collector status -v       # verbose: styled breakdown + a plain verdict
 collector doctor          # one-time setup health: cert / service / rule / port
 collector where           # map of every file this tool touches
 ```
