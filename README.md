@@ -5,6 +5,8 @@ your own traffic: when you open a conversation, the web app itself fetches the
 whole message tree — this catches that response and writes it to disk.
 Overwrite = latest full snapshot. Domain-agnostic: add a service, add a row.
 
+Why it exists — the goal and its limits — is in [GOAL.md](GOAL.md).
+
 ## Why a proxy (not an extension / not CDP)
 
 - **Extension** is per-site — you rewrite it for every app's DOM and fetch shape.
