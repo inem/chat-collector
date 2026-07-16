@@ -1,0 +1,216 @@
+#!/bin/bash
+# tap: one fail-safe handle for the capture spine (system proxy + mitmdump).
+#
+# The ONLY thing that can break your net is "proxy armed + no live proxy behind
+# the port". Guards make that state impossible:
+#   ON  arms the proxy, then makes a REAL request through it; auto-disarms if
+#       nothing flows.
+#   OFF disarms and confirms it read back off BEFORE killing anything.
+#   CAPTURE preflights the new addon and rolls back (disarm) if it won't come up.
+#   We never trust networksetup's exit code — we read state back / test traffic.
+#
+# Usage: tap install | on | off | status [-v] | doctor | where | capture dumb|legacy
+set -uo pipefail
+
+PORT=8899
+SVC="Wi-Fi"                              # `networksetup -listnetworkserviceorder`
+LABEL="com.tap"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG="/tmp/tap.log"
+STREAM="$HOME/.tap/stream.jsonl"
+PATTERN="mitmdump.*-p $PORT"
+NS=/usr/sbin/networksetup
+
+# resolve this script's real dir (following the PATH symlink) so paths aren't
+# hardcoded — works wherever you cloned it.
+SELF="${BASH_SOURCE[0]}"; while [ -L "$SELF" ]; do SELF="$(readlink "$SELF")"; done
+REPO="$(cd "$(dirname "$SELF")" && pwd)"
+ADDON_DUMB="$REPO/poc/capture.py"        # new rails: writes the generic stream
+ADDON_LEGACY="$REPO/chat_collector.py"   # old rails: chatgpt-only dumps
+
+proc_up() { pgrep -f "$PATTERN" >/dev/null; }
+port_up() { nc -z 127.0.0.1 "$PORT" 2>/dev/null; }
+armed()   { $NS -getwebproxy "$SVC" | grep -q "Enabled: Yes" \
+         || $NS -getsecurewebproxy "$SVC" | grep -q "Enabled: Yes"; }
+flows()   { curl -s -o /dev/null --max-time 6 -x "http://127.0.0.1:$PORT" http://example.com; }
+
+# which addon is the live mitmdump running?
+capture_mode() {
+  local cmd; cmd=$(ps -o command= -p "$(pgrep -f "$PATTERN" | head -1)" 2>/dev/null)
+  case "$cmd" in
+    *poc/capture.py*)    echo dumb   ;;
+    *chat_collector.py*) echo legacy ;;
+    *)                   echo "?"    ;;
+  esac
+}
+
+write_plist() {                           # write_plist <addon-path>
+  local addon="$1" mitm; mitm=$(command -v mitmdump)
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array>
+    <string>$mitm</string><string>-s</string><string>$addon</string><string>-p</string><string>$PORT</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$LOG</string>
+  <key>StandardErrorPath</key><string>$LOG</string>
+</dict></plist>
+EOF
+}
+
+start_proc() { proc_up && port_up && return 0
+  mitmdump -s "$ADDON_DUMB" -p "$PORT" >"$LOG" 2>&1 &
+  for _ in $(seq 20); do port_up && return 0; sleep 0.5; done; return 1; }
+stop_proc() { pkill -TERM -f "$PATTERN" 2>/dev/null
+  for _ in $(seq 20); do proc_up || return 0; sleep 0.25; done
+  pkill -KILL -f "$PATTERN" 2>/dev/null
+  for _ in $(seq 8); do proc_up || return 0; sleep 0.25; done; return 1; }
+
+arm_proxy() {                             # needs the sudoers rule
+  sudo -n $NS -setwebproxy "$SVC" 127.0.0.1 "$PORT" 2>/dev/null
+  sudo -n $NS -setsecurewebproxy "$SVC" 127.0.0.1 "$PORT" 2>/dev/null
+  sudo -n $NS -setproxybypassdomains "$SVC" localhost 127.0.0.1 '*.local' 2>/dev/null
+  armed; }
+disarm_proxy() {
+  sudo -n $NS -setwebproxystate "$SVC" off 2>/dev/null
+  sudo -n $NS -setsecurewebproxystate "$SVC" off 2>/dev/null
+  ! armed; }
+
+if [ -t 1 ]; then G=$'\e[32m'; D=$'\e[2m'; R=$'\e[31m'; Y=$'\e[33m'; Z=$'\e[0m'; else G= D= R= Y= Z=; fi
+
+case "${1:-status}" in
+  on)
+    start_proc || { echo "ABORT: mitmdump didn't come up on $PORT — proxy untouched, net safe"; exit 1; }
+    arm_proxy  || { echo "ABORT: couldn't arm proxy — mitmdump runs but proxy is off, net safe"; exit 1; }
+    if flows; then echo "ON — $SVC -> 127.0.0.1:$PORT, log $LOG"
+    else disarm_proxy >/dev/null; echo "ABORT: proxy armed but no traffic flowed — disarmed, net safe"; exit 1; fi
+    ;;
+  off)
+    disarm_proxy || { echo "REFUSING to kill mitmdump: can't confirm proxy is off — net would break."; exit 1; }
+    if stop_proc; then echo "OFF — proxy disarmed (verified), mitmdump stopped"
+    else               echo "OFF — proxy disarmed, but a mitmdump WON'T DIE; check: pgrep -fl mitmdump"; exit 1; fi
+    ;;
+  capture)
+    mode="${2:-}"
+    case "$mode" in
+      dumb)   NEW="$ADDON_DUMB"   ;;
+      legacy) NEW="$ADDON_LEGACY" ;;
+      *) echo "usage: tap capture dumb|legacy"; echo "current: $(capture_mode)"; exit 1 ;;
+    esac
+    [ -f "$NEW" ] || { echo "${R}✗${Z} addon not found: $NEW"; exit 1; }
+    # preflight on a throwaway port — never touch the live service if it won't load
+    mitmdump -s "$NEW" -p 8898 >/tmp/tap-preflight.log 2>&1 &
+    pf=$!; okp=0
+    for _ in $(seq 8); do nc -z 127.0.0.1 8898 2>/dev/null && { okp=1; break; }; sleep 0.5; done
+    kill $pf 2>/dev/null; wait $pf 2>/dev/null
+    [ $okp = 1 ] || { echo "${R}✗ ABORT${Z}: '$mode' addon failed to load — live service untouched"; tail -3 /tmp/tap-preflight.log; exit 1; }
+    echo "  ${G}●${Z} preflight ok: '$mode' addon loads"
+    write_plist "$NEW"
+    launchctl bootout   "gui/$(id -u)/$LABEL" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
+    up=0; for _ in $(seq 12); do port_up && { up=1; break; }; sleep 0.5; done
+    if [ $up = 1 ]; then echo "  ${G}●${Z} capture → $mode (service reloaded, port live)"
+    else
+      echo "  ${R}✗${Z} new capture did NOT come up — disarming proxy so you're not cut off"
+      disarm_proxy >/dev/null 2>&1
+      echo "     proxy off, traffic direct. investigate: tail $LOG"; exit 1
+    fi
+    ;;
+  status)
+    mode=$(capture_mode)
+    if [ "${2:-}" = "--verbose" ] || [ "${2:-}" = "-v" ]; then
+      wh=$($NS -getwebproxy "$SVC" | awk '/^Enabled/{print $2}')
+      ws=$($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')
+      echo
+      if proc_up; then echo "  ${G}●${Z} tap  ${D}· $(pgrep -f "$PATTERN" | head -1) · mode=$mode${Z}"
+      else echo "  ${R}✗ tap — not running${Z}"; fi
+      echo
+      if armed; then echo "  ${G}●${Z} browser/apps  ${D}capturing${Z}"
+      else echo "  ${D}○ browser/apps  direct — 'tap on' to start${Z}"; fi
+      echo "     ${D}(system proxy: http=$wh  https=$ws)${Z}"
+      if [ "$mode" = dumb ] && [ -f "$STREAM" ]; then
+        echo "     ${D}stream: $(wc -l <"$STREAM" | tr -d ' ') records → $STREAM${Z}"
+      fi
+      echo
+      if ! proc_up && armed; then echo "  ${Y}⚠ broken: proxy armed but tap is down. 'tap off' or restart the service.${Z}"
+      elif proc_up && armed;    then echo "  ${G}✓ capturing${Z} ${D}(mode=$mode) — launchd keeps it up.${Z}"
+      elif proc_up;             then echo "  ${D}○ idle — up but proxy off. 'tap on' to capture.${Z}"
+      else                           echo "  ${D}○ off — down, browser direct.${Z}"; fi
+      echo
+    else
+      if proc_up; then echo "tap           ${G}●${Z} up ${D}· $(pgrep -f "$PATTERN" | head -1) · $mode${Z}"
+      else             echo "tap           ${R}✗ down${Z}"; fi
+      armed && echo "browser/apps  ${G}● capturing${Z}" || echo "browser/apps  ${D}○ direct${Z}   ${D}(tap on)${Z}"
+      if ! proc_up && armed; then echo "${Y}⚠  proxy armed but tap is down — traffic broken.${Z}"; fi
+    fi
+    ;;
+  doctor)
+    ok()  { printf "  ${G}●${Z} %-30s ${D}%s${Z}\n" "$1" "${2:-}"; }
+    bad() { echo "  ${R}✗${Z} $1"; echo "     ${D}fix: $2${Z}"; }
+    echo
+    command -v mitmdump >/dev/null && ok "recorder installed" "mitmproxy" || bad "recorder missing" "brew install mitmproxy"
+    [ -f "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" ] && ok "HTTPS key ready" "~/.mitmproxy/mitmproxy-ca-cert.pem" \
+      || bad "no HTTPS key — encrypted traffic unreadable" "tap install"
+    security find-certificate -c mitmproxy >/dev/null 2>&1 && ok "Mac trusts the key" "verify: open mitm.it with proxy on" \
+      || bad "key not trusted — HTTPS won't decrypt" "open mitm.it with proxy on, install cert, Always Trust"
+    launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && ok "auto-starts, survives reboot" "$PLIST" \
+      || bad "service not loaded" "tap install"
+    sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1 && ok "on/off silent, no password" "/etc/sudoers.d/tap" \
+      || bad "on/off will prompt for a password" "sudo visudo -f /etc/sudoers.d/tap  (paste sudoers.snippet)"
+    port_up && ok "capturing right now" "mode=$(capture_mode), port $PORT" || bad "recorder is down" "launchctl kickstart -k gui/$(id -u)/$LABEL"
+    echo
+    ;;
+  install)
+    echo
+    command -v mitmdump >/dev/null || { echo "  ${R}✗${Z} mitmproxy not installed — brew install mitmproxy, then rerun."; exit 1; }
+    mkdir -p "$HOME/.local/bin"; ln -sf "$REPO/tap" "$HOME/.local/bin/tap"
+    echo "  ${G}●${Z} linked  ~/.local/bin/tap -> this repo"
+    case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "     ${Y}note: add ~/.local/bin to PATH in ~/.zshrc${Z}";; esac
+    # migrate off the old chat-collector label if present
+    if launchctl print "gui/$(id -u)/com.chat-collector" >/dev/null 2>&1; then
+      launchctl bootout "gui/$(id -u)/com.chat-collector" 2>/dev/null
+      echo "  ${G}●${Z} retired old service com.chat-collector"
+    fi
+    write_plist "$ADDON_DUMB"             # new rails: dumb capture by default
+    launchctl bootout   "gui/$(id -u)/$LABEL" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
+    up=0; for _ in $(seq 12); do port_up && { up=1; break; }; sleep 0.5; done
+    if [ $up = 1 ]; then echo "  ${G}●${Z} $LABEL loaded, dumb capture live (survives reboot)"
+    else echo "  ${R}✗${Z} service didn't come up — disarming proxy so you're not cut off"; disarm_proxy >/dev/null 2>&1
+         echo "     proxy off, traffic direct. investigate: tail $LOG"; fi
+    echo
+    echo "  ${D}manual steps (admin), in order:${Z}"
+    echo "  ${D}1.${Z} sudo visudo -f /etc/sudoers.d/tap   (paste sudoers.snippet, username = $(id -un))"
+    echo "  ${D}2.${Z} tap on"
+    echo "  ${D}3.${Z} open http://mitm.it (proxy on) → install cert → Always Trust"
+    echo "  ${D}then: tap doctor  ·  read side (orchestrator+readers) is Phase 2${Z}"
+    echo
+    ;;
+  where)
+    mk() { [ -e "$1" ] && printf "${G}●${Z}" || printf "${R}○${Z}"; }
+    link=$(readlink "$HOME/.local/bin/tap" 2>/dev/null || echo "— not on PATH")
+    sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1 && sdr="${G}●${Z}" || sdr="${R}○${Z}"
+    streamn=$([ -f "$STREAM" ] && echo "$(wc -l <"$STREAM" | tr -d ' ') records" || echo "none yet")
+    echo
+    echo "  ${D}you run${Z}"
+    echo "    $(mk "$HOME/.local/bin/tap") ~/.local/bin/tap          ${D}→ $link${Z}"
+    echo
+    echo "  ${D}code — $REPO/${Z}"
+    echo "    ${D}tap · poc/capture.py (spine) · poc/orchestrator · poc/readers/*${Z}"
+    echo
+    echo "  ${D}installed into the system${Z}"
+    echo "    $(mk "$PLIST") $PLIST  ${D}always-on service${Z}"
+    echo "    $sdr /etc/sudoers.d/tap        ${D}silent on/off${Z}"
+    echo "    $(mk "$HOME/.mitmproxy/mitmproxy-ca-cert.pem") ~/.mitmproxy/mitmproxy-ca-cert.pem  ${D}HTTPS key${Z}"
+    echo
+    echo "  ${D}what it produces${Z}"
+    echo "    $(mk "$STREAM") $STREAM  ${D}$streamn (dumb capture)${Z}"
+    echo "    $(mk "$LOG") $LOG"
+    echo
+    ;;
+  *) echo "usage: tap install|on|off|status [-v]|doctor|where|capture dumb|legacy"; exit 1;;
+esac

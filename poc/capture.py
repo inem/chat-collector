@@ -7,7 +7,7 @@ Run:  mitmdump -s capture.py
 """
 import json, os, time
 
-STREAM = os.path.expanduser("~/.chat-collector/stream.jsonl")
+STREAM = os.path.expanduser("~/.tap/stream.jsonl")
 
 def response(flow):
     r = flow.response
