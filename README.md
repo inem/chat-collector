@@ -20,8 +20,10 @@ toggle it. And toggling the *plumbing* is exactly what bites you (see below), so
 the recommended setup is **always-on**: mitmproxy runs as a launchd service, and
 you never tear it down.
 
-This version captures **browser** traffic. The browser follows the macOS system
-proxy, which `collector on/off` arms and disarms.
+This version captures **browser & GUI-app** traffic — anything that honors the
+macOS system proxy, which `collector on/off` arms and disarms. (Browsers are the
+main target; other native/Electron apps that read the system proxy get captured
+too.)
 
 CLI tools and non-browser apps don't follow the system proxy (they use
 `HTTP_PROXY`/`HTTPS_PROXY` env vars instead), so they go direct and aren't

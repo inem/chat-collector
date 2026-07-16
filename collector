@@ -89,11 +89,11 @@ case "${1:-status}" in
       fi
       echo
       if armed; then
-        echo "  ${G}●${Z} browser    ${D}capturing${Z}"
-        echo "     ${D}your browser's traffic is recorded to ~/chat-dumps${Z}"
+        echo "  ${G}●${Z} browser/apps  ${D}capturing${Z}"
+        echo "     ${D}your browser & any GUI app that honors the system proxy → ~/chat-dumps${Z}"
       else
-        echo "  ${D}○ browser    direct${Z}"
-        echo "     ${D}browser is NOT recorded — run 'collector on' to start${Z}"
+        echo "  ${D}○ browser/apps  direct${Z}"
+        echo "     ${D}NOT recorded — run 'collector on' to start${Z}"
       fi
       echo "     ${D}(system proxy: http=$wh  https=$ws)${Z}"
       echo
@@ -110,11 +110,11 @@ case "${1:-status}" in
       echo
     else
       # compact: two aligned lines + a warning only when something's wrong
-      if proc_up; then echo "mitmproxy  ${G}●${Z} up ${D}· $(pgrep -f "$PATTERN" | head -1)${Z}"
-      else             echo "mitmproxy  ${R}✗ down${Z} ${D}· not running${Z}"; fi
-      armed && echo "browser    ${G}● capturing${Z}"                        || echo "browser    ${D}○ direct${Z}   ${D}(collector on)${Z}"
+      if proc_up; then echo "mitmproxy     ${G}●${Z} up ${D}· $(pgrep -f "$PATTERN" | head -1)${Z}"
+      else             echo "mitmproxy     ${R}✗ down${Z} ${D}· not running${Z}"; fi
+      armed && echo "browser/apps  ${G}● capturing${Z}"                     || echo "browser/apps  ${D}○ direct${Z}   ${D}(collector on)${Z}"
       if ! proc_up && armed; then
-        echo "${Y}⚠  proxy armed but mitmproxy is down — browser traffic is broken.${Z}"
+        echo "${Y}⚠  proxy armed but mitmproxy is down — GUI-app traffic is broken.${Z}"
       fi
     fi
     ;;
