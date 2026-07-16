@@ -147,9 +147,9 @@ case "${1:-status}" in
       && ok "CA cert in a keychain  ${D}(verify it's TRUSTED: open mitm.it in the browser with proxy on)${Z}" \
       || bad "CA cert not trusted — HTTPS won't decrypt" "open http://mitm.it with the proxy on, install the cert, mark it Always Trust"
 
-    launchctl list 2>/dev/null | grep -q com.chat-collector \
+    launchctl print "gui/$(id -u)/com.chat-collector" >/dev/null 2>&1 \
       && ok "always-on service loaded (launchd)" \
-      || bad "launchd service not loaded — recorder won't auto-start" "cp com.chat-collector.plist ~/Library/LaunchAgents/ && launchctl load -w ~/Library/LaunchAgents/com.chat-collector.plist"
+      || bad "launchd service not loaded — recorder won't auto-start" "cp com.chat-collector.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.chat-collector.plist"
 
     sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1 \
       && ok "sudoers rule present — on/off run silently" \
