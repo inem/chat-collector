@@ -15,7 +15,7 @@ from urllib.parse import urlparse, parse_qs
 
 OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/linkedin")
 KEEP = re.compile(r"/voyager/api/(graphql|messaging/|voyagerMessaging|identity/|me\b)|/rest/")
-SKIP = re.compile(r"/sensor|/li/|/realtime|tscp-serving|litms|log_event")
+SKIP = re.compile(r"/sensor|/li/|/realtime|tscp-serving|litms|log_event|/rest/track")
 
 def name_for(url):
     u = urlparse(url)
