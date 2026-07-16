@@ -110,12 +110,14 @@ case "${1:-status}" in
     [ $okp = 1 ] || { echo "${R}✗ ABORT${Z}: '$mode' addon failed to load — live service untouched"; tail -3 /tmp/tap-preflight.log; exit 1; }
     echo "  ${G}●${Z} preflight ok: '$mode' addon loads"
     write_plist "$NEW"
-    launchctl bootout   "gui/$(id -u)/$LABEL" 2>/dev/null
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+    stop_proc >/dev/null 2>&1             # WAIT for the old process to actually die — bootout is async
+    err=$(launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>&1)
     up=0; for _ in $(seq 12); do port_up && { up=1; break; }; sleep 0.5; done
-    if [ $up = 1 ]; then echo "  ${G}●${Z} capture → $mode (service reloaded, port live)"
+    if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && [ $up = 1 ]; then
+      echo "  ${G}●${Z} capture → $mode (service reloaded, port live)"
     else
-      echo "  ${R}✗${Z} new capture did NOT come up — disarming proxy so you're not cut off"
+      echo "  ${R}✗${Z} new capture did NOT load${err:+ — $err} — disarming proxy so you're not cut off"
       disarm_proxy >/dev/null 2>&1
       echo "     proxy off, traffic direct. investigate: tail $LOG"; exit 1
     fi
@@ -176,12 +178,18 @@ case "${1:-status}" in
       echo "  ${G}●${Z} retired old service com.chat-collector"
     fi
     write_plist "$ADDON_DUMB"             # new rails: dumb capture by default
-    launchctl bootout   "gui/$(id -u)/$LABEL" 2>/dev/null
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null
+    launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+    stop_proc >/dev/null 2>&1             # kill ANY mitmdump on the port (strays too) and WAIT for death
+    err=$(launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>&1)
     up=0; for _ in $(seq 12); do port_up && { up=1; break; }; sleep 0.5; done
-    if [ $up = 1 ]; then echo "  ${G}●${Z} $LABEL loaded, dumb capture live (survives reboot)"
-    else echo "  ${R}✗${Z} service didn't come up — disarming proxy so you're not cut off"; disarm_proxy >/dev/null 2>&1
-         echo "     proxy off, traffic direct. investigate: tail $LOG"; fi
+    # verify the SERVICE is loaded — a live port alone can be a stray/orphan process
+    if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 && [ $up = 1 ]; then
+      echo "  ${G}●${Z} $LABEL loaded, dumb capture live (survives reboot)"
+    else
+      echo "  ${R}✗${Z} service didn't load${err:+ — $err}"
+      disarm_proxy >/dev/null 2>&1
+      echo "     proxy disarmed (traffic direct — you're not cut off). investigate: tail $LOG"
+    fi
     echo
     echo "  ${D}manual steps (admin), in order:${Z}"
     echo
