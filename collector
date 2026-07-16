@@ -206,24 +206,30 @@ EOF
     echo
     ;;
   where)
+    # real, not hardcoded: resolves $REPO, checks what actually exists
+    mk()   { [ -e "$1" ] && printf "${G}●${Z}" || printf "${R}○${Z}"; }
+    link=$(readlink "$HOME/.local/bin/collector" 2>/dev/null || echo "— not on PATH")
+    dumps=$(find "$HOME/chat-dumps" -name '*.json' 2>/dev/null | wc -l | tr -d ' ')
+    svcs=$(ls "$HOME/chat-dumps" 2>/dev/null | tr '\n' ' ')
+    logn=$([ -f "$LOG" ] && echo "$(wc -l <"$LOG" | tr -d ' ') lines" || echo "none yet")
+    sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1 && sdr="${G}●${Z}" || sdr="${R}○${Z}"
     echo
     echo "  ${D}you run${Z}"
-    echo "    collector                                       ${D}~/.local/bin/collector → repo${Z}"
+    echo "    $(mk "$HOME/.local/bin/collector") ~/.local/bin/collector          ${D}→ $link${Z}"
     echo
-    echo "  ${D}code — ~/Code/chat-collector/${Z}"
-    echo "    collector                                       ${D}on/off/status/doctor/where${Z}"
-    echo "    chat_collector.py                               ${D}addon: what to catch, where to write${Z}"
-    echo "    com.chat-collector.plist                        ${D}the always-on service definition${Z}"
-    echo "    sudoers.snippet                                 ${D}the passwordless on/off rule${Z}"
+    echo "  ${D}code — $REPO/${Z}"
+    for f in collector chat_collector.py com.chat-collector.plist sudoers.snippet; do
+      echo "    $(mk "$REPO/$f") $f"
+    done
     echo
     echo "  ${D}installed into the system${Z}"
-    echo "    ~/Library/LaunchAgents/com.chat-collector.plist ${D}makes it always-on${Z}"
-    echo "    /etc/sudoers.d/chat-collector                   ${D}silent on/off${Z}"
-    echo "    ~/.mitmproxy/mitmproxy-ca-cert.pem              ${D}the HTTPS key${Z}"
+    echo "    $(mk "$HOME/Library/LaunchAgents/com.chat-collector.plist") ~/Library/LaunchAgents/com.chat-collector.plist  ${D}always-on service${Z}"
+    echo "    $sdr /etc/sudoers.d/chat-collector                    ${D}silent on/off (checked via sudo -n)${Z}"
+    echo "    $(mk "$HOME/.mitmproxy/mitmproxy-ca-cert.pem") ~/.mitmproxy/mitmproxy-ca-cert.pem               ${D}HTTPS key${Z}"
     echo
     echo "  ${D}what it produces${Z}"
-    echo "    ~/chat-dumps/<service>/<id>.json                ${D}the captured conversations${Z}"
-    echo "    /tmp/chat-collector.log                         ${D}what the recorder is doing${Z}"
+    echo "    $(mk "$HOME/chat-dumps") ~/chat-dumps/    ${D}$dumps dumps${Z}${svcs:+  ${D}· $svcs${Z}}"
+    echo "    $(mk "$LOG") $LOG    ${D}$logn${Z}"
     echo
     ;;
   *) echo "usage: collector install|on|off|status [-v]|doctor|where"; exit 1;;
