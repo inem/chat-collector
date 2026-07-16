@@ -190,17 +190,25 @@ case "${1:-status}" in
       disarm_proxy >/dev/null 2>&1
       echo "     proxy disarmed (traffic direct — you're not cut off). investigate: tail $LOG"
     fi
+    # only show what's actually still missing — don't nag about done steps
     echo
-    echo "  ${D}manual steps (admin), in order:${Z}"
+    need=0
+    if ! sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1; then
+      need=1
+      echo "  ${Y}→${Z} allow proxy toggle:  ${D}sudo visudo -f /etc/sudoers.d/tap${Z}"
+      echo "     ${D}paste exactly this (your username already filled in):${Z}"
+      sed "s/^inem /$(id -un) /" "$REPO/sudoers.snippet" | grep -v '^#' | grep -v '^$' | sed 's/^/       /'
+      echo
+    fi
+    if ! armed; then
+      need=1; echo "  ${Y}→${Z} start capturing:     ${D}tap on${Z}"
+    fi
+    if ! security find-certificate -c mitmproxy >/dev/null 2>&1; then
+      need=1; echo "  ${Y}→${Z} trust the cert:      ${D}open http://mitm.it (proxy on) → install → Always Trust${Z}"
+    fi
+    [ $need = 0 ] && echo "  ${G}●${Z} nothing left to do — sudoers, proxy and cert are all set."
     echo
-    echo "  ${D}1.${Z} allow proxy toggle:   ${D}sudo visudo -f /etc/sudoers.d/tap${Z}"
-    echo "     ${D}paste exactly this (your username already filled in):${Z}"
-    sed "s/^inem /$(id -un) /" "$REPO/sudoers.snippet" | grep -v '^#' | grep -v '^$' | sed 's/^/       /'
-    echo
-    echo "  ${D}2.${Z} start capturing:      ${D}tap on${Z}"
-    echo "  ${D}3.${Z} trust the cert:       ${D}open http://mitm.it (proxy on) → install → Always Trust${Z}"
-    echo
-    echo "  ${D}then: tap doctor  ·  read side (orchestrator+readers) is Phase 2${Z}"
+    echo "  ${D}check: tap doctor  ·  read side (orchestrator+readers) is Phase 2${Z}"
     echo
     ;;
   where)
