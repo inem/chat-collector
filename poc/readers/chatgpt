@@ -6,7 +6,7 @@ import sys, json, os, re
 
 UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 RX = re.compile(r"/backend-api/conversation/(?P<id>" + UUID + r")(?:$|\?)")
-OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/chatgpt")
+OUT = os.path.expanduser(os.environ.get("TAP_OUT", "~/tap-out") + "/chatgpt")
 
 for line in sys.stdin:
     line = line.strip()

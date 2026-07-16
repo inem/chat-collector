@@ -1,14 +1,14 @@
-# chat-collector: let `collector on/off` flip the system proxy without a password.
+# tap: let `tap on/off` flip the system proxy without a password.
 # Scoped to ONLY the proxy subcommands of networksetup — nothing else.
 #
 # Install (once), safely, via a syntax-checked drop-in:
-#   sudo visudo -f /etc/sudoers.d/chat-collector
+#   sudo visudo -f /etc/sudoers.d/tap
 # then paste the two lines below (replace `inem` if your user differs), save.
 # visudo refuses to save if the syntax is wrong, so you can't lock yourself out.
 
-Cmnd_Alias CHATPROXY = /usr/sbin/networksetup -setwebproxy *, \
-                       /usr/sbin/networksetup -setsecurewebproxy *, \
-                       /usr/sbin/networksetup -setwebproxystate *, \
-                       /usr/sbin/networksetup -setsecurewebproxystate *, \
-                       /usr/sbin/networksetup -setproxybypassdomains *
-inem ALL=(root) NOPASSWD: CHATPROXY
+Cmnd_Alias TAPPROXY = /usr/sbin/networksetup -setwebproxy *, \
+                      /usr/sbin/networksetup -setsecurewebproxy *, \
+                      /usr/sbin/networksetup -setwebproxystate *, \
+                      /usr/sbin/networksetup -setsecurewebproxystate *, \
+                      /usr/sbin/networksetup -setproxybypassdomains *
+inem ALL=(root) NOPASSWD: TAPPROXY

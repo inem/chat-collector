@@ -8,7 +8,7 @@
 import sys, json, os, re
 from urllib.parse import urlparse, parse_qs
 
-BASE = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/youtube")
+BASE = os.path.expanduser(os.environ.get("TAP_OUT", "~/tap-out") + "/youtube")
 VID_DIR = os.path.join(BASE, "watched")
 WL_LOG = os.path.join(BASE, "watch-later.jsonl")
 

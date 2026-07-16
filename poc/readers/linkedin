@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # reader:linkedin — traffic-informed (promoted from a blind net after seeing real
-# browsing in /tmp/chat-collector.log).
+# browsing in /tmp/tap.log).
 # STRUCTURE differs from youtube: LinkedIn funnels most content through ONE
 # endpoint /voyager/api/graphql (the operation is in the ?queryId param, not the
 # path) plus a second surface /rest/. So graphql is keyed by its query param —
@@ -13,7 +13,7 @@
 import sys, json, os, re
 from urllib.parse import urlparse, parse_qs
 
-OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/linkedin")
+OUT = os.path.expanduser(os.environ.get("TAP_OUT", "~/tap-out") + "/linkedin")
 KEEP = re.compile(r"/voyager/api/(graphql|messaging/|voyagerMessaging|identity/|me\b)|/rest/")
 SKIP = re.compile(r"/sensor|/li/|/realtime|tscp-serving|litms|log_event|/rest/track")
 

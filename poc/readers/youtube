@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # reader:youtube — traffic-informed (promoted from a blind net after seeing real
-# browsing in /tmp/chat-collector.log). Keeps the content-bearing endpoints,
+# browsing in /tmp/tap.log). Keeps the content-bearing endpoints,
 # skips the telemetry firehose. Tune the sets as more traffic shows up.
 #
 # CONTENT observed:  youtubei/v1/{player,browse,get_watch,guide,live_chat/*},
@@ -8,7 +8,7 @@
 # NOISE observed:    updated_metadata, log_event, player/heartbeat, api/stats/*, qoe
 import sys, json, os, re
 
-OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/youtube")
+OUT = os.path.expanduser(os.environ.get("TAP_OUT", "~/tap-out") + "/youtube")
 KEEP = re.compile(r"/youtubei/v1/(player|browse|get_watch|guide|search|live_chat/[a-z_]+)(?:$|\?)"
                   r"|/api/timedtext")
 SKIP = re.compile(r"updated_metadata|log_event|heartbeat|/api/stats/|/qoe")
