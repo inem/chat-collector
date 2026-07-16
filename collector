@@ -57,6 +57,9 @@ disarm_proxy() {
   ! armed                                 # verify it actually read back OFF
 }
 
+if [ -t 1 ]; then G=$'\e[32m'; D=$'\e[2m'; R=$'\e[31m'; Y=$'\e[33m'; Z=$'\e[0m'; else G= D= R= Y= Z=; fi
+env_set() { [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; }
+
 case "${1:-status}" in
   on)
     start_proc || { echo "ABORT: mitmdump didn't come up on $PORT — proxy untouched, net safe"; exit 1; }
@@ -74,9 +77,6 @@ case "${1:-status}" in
     else               echo "OFF — proxy disarmed, but a mitmdump WON'T DIE; check: pgrep -fl mitmdump"; exit 1; fi
     ;;
   status)
-    if [ -t 1 ]; then G=$'\e[32m'; D=$'\e[2m'; R=$'\e[31m'; Y=$'\e[33m'; Z=$'\e[0m'; else G= D= R= Y= Z=; fi
-    env_set() { [ -n "${HTTP_PROXY:-}${HTTPS_PROXY:-}" ]; }
-
     if [ "${2:-}" = "--verbose" ] || [ "${2:-}" = "-v" ]; then
       wh=$($NS -getwebproxy       "$SVC" | awk '/^Enabled/{print $2}')
       ws=$($NS -getsecurewebproxy "$SVC" | awk '/^Enabled/{print $2}')
@@ -130,5 +130,35 @@ case "${1:-status}" in
       fi
     fi
     ;;
-  *) echo "usage: collector on|off|status"; exit 1;;
+  doctor)
+    # one-time setup health: is the install correct? (distinct from runtime status)
+    ok()   { echo "  ${G}●${Z} $1"; }
+    bad()  { echo "  ${R}✗${Z} $1"; echo "     ${D}fix: $2${Z}"; }
+    echo
+    command -v mitmdump >/dev/null \
+      && ok "mitmproxy installed" \
+      || bad "mitmproxy not installed" "brew install mitmproxy"
+
+    [ -f "$HOME/.mitmproxy/mitmproxy-ca-cert.pem" ] \
+      && ok "CA cert generated" \
+      || bad "no CA cert yet (run mitmdump once to generate)" "launchctl load -w ~/Library/LaunchAgents/com.chat-collector.plist"
+
+    security find-certificate -c mitmproxy >/dev/null 2>&1 \
+      && ok "CA cert in a keychain  ${D}(verify it's TRUSTED: open mitm.it in the browser with proxy on)${Z}" \
+      || bad "CA cert not trusted — HTTPS won't decrypt" "open http://mitm.it with the proxy on, install the cert, mark it Always Trust"
+
+    launchctl list 2>/dev/null | grep -q com.chat-collector \
+      && ok "always-on service loaded (launchd)" \
+      || bad "launchd service not loaded — recorder won't auto-start" "cp com.chat-collector.plist ~/Library/LaunchAgents/ && launchctl load -w ~/Library/LaunchAgents/com.chat-collector.plist"
+
+    sudo -n -l $NS -setwebproxystate "$SVC" off >/dev/null 2>&1 \
+      && ok "sudoers rule present — on/off run silently" \
+      || bad "no sudoers rule — 'collector on' will need a password" "sudo visudo -f /etc/sudoers.d/chat-collector  (paste sudoers.snippet)"
+
+    port_up \
+      && ok "port $PORT is responding" \
+      || bad "nothing listening on $PORT — recorder is down" "launchctl kickstart -k gui/$(id -u)/com.chat-collector"
+    echo
+    ;;
+  *) echo "usage: collector on|off|status [-v]|doctor"; exit 1;;
 esac

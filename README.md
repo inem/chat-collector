@@ -82,7 +82,12 @@ collector on              # arm the system proxy (browser traffic -> mitmproxy)
 collector off             # disarm it (browser traffic direct again)
 collector status          # compact: is mitm up? is each layer captured?
 collector status -v       # verbose: both proxy layers + a plain verdict
+collector doctor          # one-time setup health: cert / service / rule / port
 ```
+
+`status` answers "what's happening **now**" (runtime). `doctor` answers "is it
+**set up** right" (cert trusted? launchd loaded? sudoers present? port live?) —
+each check prints ● ok or ✗ with the fix command.
 
 Compact `status` is a quick glance:
 
