@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+# reader:youtube-watched — focused extractor for exactly the wanted pieces:
+#   player          -> url + title + description of videos I watch
+#   /api/timedtext  -> subtitles (keyed by video id)
+#   browse/edit_playlist -> what I add to Watch Later (in the REQUEST body)
+# One accumulating file per video; watch-later adds appended to a log.
+# Needs bodies (live capture) to produce real output; demoed on a sample.
+import sys, json, os, re
+from urllib.parse import urlparse, parse_qs
+
+BASE = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/youtube")
+VID_DIR = os.path.join(BASE, "watched")
+WL_LOG = os.path.join(BASE, "watch-later.jsonl")
+
+def load(vid):
+    p = os.path.join(VID_DIR, vid + ".json")
+    return json.load(open(p)) if os.path.exists(p) else {
+        "videoId": vid, "url": f"https://www.youtube.com/watch?v={vid}"}
+
+def save(rec):
+    os.makedirs(VID_DIR, exist_ok=True)
+    json.dump(rec, open(os.path.join(VID_DIR, rec["videoId"] + ".json"), "w"),
+              ensure_ascii=False, indent=2)
+
+def jbody(s):
+    try: return json.loads(s or "")
+    except Exception: return {}
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try: rec = json.loads(line)
+    except Exception: continue
+    url = rec.get("url", "")
+    if rec.get("status") != 200:
+        continue
+    resp = jbody(rec.get("body"))
+
+    if "/youtubei/v1/player" in url:
+        vd = resp.get("videoDetails") or {}
+        vid = vd.get("videoId")
+        if vid:
+            r = load(vid)
+            r.update(title=vd.get("title"), description=vd.get("shortDescription"),
+                     channel=vd.get("author"), length_s=vd.get("lengthSeconds"))
+            save(r)
+            print(f"[yt-watched] {vid}: {r.get('title')!r}", file=sys.stderr)
+
+    elif "/api/timedtext" in url:
+        vid = parse_qs(urlparse(url).query).get("v", [None])[0]
+        text = "".join(s.get("utf8", "") for e in (resp.get("events") or [])
+                       for s in (e.get("segs") or []))
+        if vid and text:
+            r = load(vid); r["subtitles"] = text; save(r)
+            print(f"[yt-watched] subtitles {vid} ({len(text)} chars)", file=sys.stderr)
+
+    elif "/browse/edit_playlist" in url:
+        req = jbody(rec.get("req_body"))            # the ADD intent is in the request
+        acts = req.get("actions") or []
+        added = [a.get("addedVideoId") for a in acts if a.get("addedVideoId")]
+        pid = req.get("playlistId", "")
+        if added and pid == "WL":                    # WL = the Watch Later playlist
+            os.makedirs(BASE, exist_ok=True)
+            with open(WL_LOG, "a") as f:
+                for vid in added:
+                    f.write(json.dumps({"ts": rec.get("ts"), "videoId": vid,
+                            "url": f"https://www.youtube.com/watch?v={vid}"}) + "\n")
+            print(f"[yt-watched] watch-later += {added}", file=sys.stderr)

@@ -23,7 +23,8 @@ def response(flow):
         "url": flow.request.url,
         "status": r.status_code,
         "ctype": ctype,
-        "body": r.get_text(),
+        "req_body": flow.request.get_text() or "",   # POST intent lives here (e.g. watch-later add)
+        "body": r.get_text(),                         # response body
     }
     os.makedirs(os.path.dirname(STREAM), exist_ok=True)
     with open(STREAM, "a") as f:

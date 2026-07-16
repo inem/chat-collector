@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
-# reader:linkedin — broad net on LinkedIn's Voyager API (/voyager/api/...).
-# v0 = detect stage: dump whatever flows on that surface, one file per endpoint.
-# The prefix is known-from-general-knowledge, UNVERIFIED against real traffic —
-# once we see the actual stream we narrow this into real extractors.
+# reader:linkedin — traffic-informed (promoted from a blind net after seeing real
+# browsing in /tmp/chat-collector.log).
+# STRUCTURE differs from youtube: LinkedIn funnels most content through ONE
+# endpoint /voyager/api/graphql (the operation is in the ?queryId param, not the
+# path) plus a second surface /rest/. So graphql is keyed by its query param —
+# otherwise every operation collapses into one file.
+#
+# CONTENT observed:  /voyager/api/graphql (feed/profile/search — op in ?queryId),
+#                    /voyager/api/messaging/*, voyagerMessaging*, identity/*, me,
+#                    /rest/* (newer content surface)
+# NOISE observed:    /sensor, /li/, /realtime, tscp-serving, litms, log_event
 import sys, json, os, re
+from urllib.parse import urlparse, parse_qs
 
-PREFIX = "/voyager/api/"
 OUT = os.path.expanduser(os.environ.get("CHAT_DUMPS", "~/chat-dumps") + "/linkedin")
+KEEP = re.compile(r"/voyager/api/(graphql|messaging/|voyagerMessaging|identity/|me\b)|/rest/")
+SKIP = re.compile(r"/sensor|/li/|/realtime|tscp-serving|litms|log_event")
 
-def slug(url):
-    path = re.sub(r"^https?://[^/]+", "", url).split("?")[0]
-    return re.sub(r"[^a-zA-Z0-9]+", "-", path).strip("-")[:120] or "root"
+def name_for(url):
+    u = urlparse(url)
+    path = re.sub(r"[^a-zA-Z0-9]+", "-", u.path).strip("-")
+    q = parse_qs(u.query)
+    op = (q.get("queryId") or q.get("q") or [""])[0]          # differentiate graphql ops
+    op = re.sub(r"[^a-zA-Z0-9]+", "-", op).strip("-")
+    return (path + ("-" + op if op else ""))[:120] or "root"
 
 for line in sys.stdin:
     line = line.strip()
@@ -20,14 +33,14 @@ for line in sys.stdin:
         rec = json.loads(line)
     except Exception:
         continue
-    if PREFIX not in rec.get("url", "") or rec.get("status") != 200:
+    url = rec.get("url", "")
+    if rec.get("status") != 200 or SKIP.search(url) or not KEEP.search(url):
         continue
     os.makedirs(OUT, exist_ok=True)
-    name = slug(rec["url"])
+    name = name_for(url)
     body = rec.get("body", "")
     try:
-        data = json.loads(body)
-        out = json.dumps(data, ensure_ascii=False, indent=2)
+        out = json.dumps(json.loads(body), ensure_ascii=False, indent=2)
     except Exception:
         out = body
     with open(os.path.join(OUT, name + ".json"), "w") as f:
